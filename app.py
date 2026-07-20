@@ -404,6 +404,9 @@ def search_box():
 
 def detail_pick():
     if not S["cols"]: return Div()
+    dc = S.get("dc") or S["cols"]
+    chips = [Label(Input(type="checkbox", name="dc", value=c, checked=(c in dc)),
+                         c, cls=f"chip{' on' if c in dc else ''}") for c in S["cols"]]
     return sect("Detail Columns",
         Form(
             Div(
@@ -411,9 +414,7 @@ def detail_pick():
                 Button("Clear", cls="btn bxs", data_clear="", type="button"),
                 style="display:flex;gap:3px;margin-bottom:4px;",
             ),
-            Div(*(Label(Input(type="checkbox", name="dc", value=c, checked=(c in S["dc"])),
-                        c, cls=f"chip{' on' if c in S['dc'] else ''}") for c in S["cols"]),
-                cls="fchips"),
+            Div(*chips, cls="fchips"),
             Input(type="hidden", name="dc_present", value="1"),
             Button("Apply", cls="btn bxs bp wf mt4"),
             hx_post="/cfg/detail-cols", hx_target="#detail",
@@ -605,12 +606,18 @@ def post(tc: str = "", sc: str = ""):
     return layout()
 
 @rt("/cfg/detail-cols", methods=["POST"])
-def post(dc: list[str] | str | None = None, dc_present: str | None = None):
+async def post(req: Request):
     """Update detail columns without replacing entire app."""
+    form = await req.form()
+    dc_present = form.get("dc_present")
     if dc_present is not None:
-        vals = [] if dc is None else ([dc] if isinstance(dc, str) else dc)
+        vals = form.getall("dc", [])  # Get ALL checked checkboxes
         S["dc"] = [c for c in vals if c in S["cols"]]
-    return detail_view(S["sel"])
+    # Return detail view + OOB swap for updated sidebar
+    return Div(
+        detail_view(S["sel"]),
+        Div(detail_pick(), id="detail-pick", hx_swap="oob"),
+    )
 
 @rt("/apply", methods=["POST"])
 async def post(req: Request):
