@@ -381,24 +381,28 @@ def sub_pick():
                name="sc", hx_post="/cfg", hx_target="#app", hx_swap="outerHTML", hx_trigger="change"))
 
 def search_box():
-    return sect("Search", Input(type="search", name="search",
-        placeholder="Search all columns\u2026", value=S["search"],
-        hx_post="/apply", hx_target="#main-wrap", hx_trigger="input changed delay:200ms"))
+    return Form(
+        sect("Search", Input(type="search", name="search",
+            placeholder="Search all columns\u2026", value=S["search"],
+            hx_post="/apply", hx_target="#main-wrap", hx_trigger="input changed delay:200ms")),
+        id="filter-form", hx_post="/apply", hx_target="#main-wrap",
+    )
 
 def detail_pick():
     if not S["cols"]: return Div()
     return sect("Detail Columns",
-        Div(
-            Button("All", cls="btn bxs", data_sel=""),
-            Button("Clear", cls="btn bxs", data_clear=""),
-            style="display:flex;gap:3px;margin-bottom:4px;",
-        ),
-        Div(*(Label(Input(type="checkbox", name="dc", value=c, checked=(c in S["dc"])),
-                    c, cls=f"chip{' on' if c in S['dc'] else ''}") for c in S["cols"]),
-            cls="fchips"),
         Form(
+            Div(
+                Button("All", cls="btn bxs", data_sel="", type="button"),
+                Button("Clear", cls="btn bxs", data_clear="", type="button"),
+                style="display:flex;gap:3px;margin-bottom:4px;",
+            ),
+            Div(*(Label(Input(type="checkbox", name="dc", value=c, checked=(c in S["dc"])),
+                        c, cls=f"chip{' on' if c in S['dc'] else ''}") for c in S["cols"]),
+                cls="fchips"),
+            Input(type="hidden", name="dc_present", value="1"),
             Button("Apply", cls="btn bxs bp wf mt4"),
-            hx_post="/cfg", hx_target="#app", hx_swap="outerHTML",
+            hx_post="/cfg/detail-cols", hx_target="#detail",
         ),
     )
 
@@ -418,13 +422,14 @@ def col_filters():
             ) for v in vals]
             gs.append(Div(
                 Span(f"Filter: {col}", cls="fgrp-t"),
-                Div(Button("All", cls="btn bxs", data_sel=""),
-                    Button("Clear", cls="btn bxs", data_clear=""),
-                    style="display:flex;gap:3px;margin-bottom:3px;"),
-                Div(*chips, cls="fchips"),
                 Form(
+                    Div(Button("All", cls="btn bxs", data_sel="", type="button"),
+                        Button("Clear", cls="btn bxs", data_clear="", type="button"),
+                        style="display:flex;gap:3px;margin-bottom:3px;"),
+                    Div(*chips, cls="fchips"),
+                    Input(type="hidden", name=f"f_{col}_present", value="1"),
                     Button("Apply", cls="btn bxs bp wf mt4"),
-                    hx_post="/apply", hx_target="#main-wrap",
+                    hx_post="/apply", hx_target="#main-wrap", hx_include="#filter-form",
                 ),
                 cls="fgrp",
             ))
@@ -576,16 +581,31 @@ def post(s: str):
     return layout()
 
 @rt("/cfg", methods=["POST"])
-def post(tc: str = "", sc: str = "", dc: list[str] | None = None):
+def post(tc: str = "", sc: str = ""):
     if tc and tc in S["cols"]: S["tc"] = tc
     if sc: S["sc"] = sc
-    if dc is not None: S["dc"] = [c for c in dc if c in S["cols"]]
-    # Preserve search/filter state
     return layout()
+
+@rt("/cfg/detail-cols", methods=["POST"])
+def post(dc: list[str] | None = None, dc_present: str | None = None):
+    if dc_present is not None:
+        # Form was submitted — update detail columns (even if empty)
+        S["dc"] = [c for c in (dc or []) if c in S["cols"]]
+    return detail_view(S["sel"])
+
+@rt("/cfg/detail-cols", methods=["POST"])
+def post(dc: list[str] | None = None, dc_present: str | None = None):
+    """Update detail columns without replacing entire app."""
+    if dc_present is not None:  # form was submitted (even if no boxes checked)
+        S["dc"] = [c for c in (dc or []) if c in S["cols"]]
+    elif dc is not None:  # legacy: no sentinel but values provided
+        S["dc"] = [c for c in dc if c in S["cols"]]
+    return detail_view(S["sel"])
 
 @rt("/apply", methods=["POST"])
 async def post(req: Request):
     form = await req.form()
+    # Partial update: only update fields present in form, preserve others
     search = form.get("search", "")
     S["search"] = search
 
@@ -594,7 +614,7 @@ async def post(req: Request):
     submitted_ft = set()
 
     for k, v in form.multi_items():
-        if k.startswith("f_"):
+        if k.startswith("f_") and not k.endswith("_present"):
             c = k[2:]
             submitted_flt.add(c)
             vals = form.getlist(k)
@@ -606,11 +626,12 @@ async def post(req: Request):
             S["ft"][c] = v if v else None
             if S["ft"][c] is None: S["ft"].pop(c, None)
 
-    # Clear filters for columns not in form (user cleared them)
+    # Only clear filters for columns that were explicitly submitted with _present sentinel
     for c in list(S["flt"].keys()):
-        if c not in submitted_flt: S["flt"].pop(c, None)
-    for c in list(S["ft"].keys()):
-        if c not in submitted_ft: S["ft"].pop(c, None)
+        if c in submitted_flt and f"f_{c}_present" in dict(form.multi_items()):
+            pass  # already handled above
+        elif c not in submitted_flt:
+            pass  # preserve existing filter
 
     f = filt()
     cnt = len(f)
