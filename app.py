@@ -238,15 +238,6 @@ document.addEventListener('DOMContentLoaded', () => {
     overlay.classList.remove('active');
   });
 
-  // Update result count via HTMX header
-  document.body.addEventListener('htmx:afterOnLoad', ev => {
-    const count = ev.detail?.xhr?.getResponseHeader('X-Row-Count');
-    if (count) {
-      const el = document.querySelector('.rbar .count');
-      if (el) el.textContent = count;
-    }
-  });
-
   // ── Panel resize ─────────────────────────────────────────────────────
   const app = document.getElementById('app');
   const left = document.getElementById('pnl-left');
@@ -321,20 +312,19 @@ def sv(v):
 def filt():
     if S["df"] is None:
         return pd.DataFrame()
-    r = S["df"].copy()
+    r = S["df"]
+    mask = pd.Series(True, index=r.index)
     if S["search"]:
         q = S["search"].lower()
-        m = pd.Series(False, index=r.index)
         for c in r.columns:
-            m |= r[c].astype(str).str.lower().str.contains(q, na=False, regex=False)
-        r = r[m]
+            mask &= r[c].astype(str).str.lower().str.contains(q, na=False, regex=False)
     for col, vals in S["flt"].items():
         if col in r.columns and vals:
-            r = r[r[col].astype(str).isin(vals)]
+            mask &= r[col].astype(str).isin(vals)
     for col, txt in S["ft"].items():
         if col in r.columns and txt:
-            r = r[r[col].astype(str).str.lower().str.contains(txt.lower(), na=False, regex=False)]
-    return r.reset_index(drop=True)
+            mask &= r[col].astype(str).str.lower().str.contains(txt.lower(), na=False, regex=False)
+    return r.loc[mask]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -450,17 +440,16 @@ def col_filters():
 
 def row_cards(df):
     if df.empty: return Div("No matching rows.", cls="empty")
-    # Cap rendered rows to avoid browser crashes
     cap = min(len(df), MAX_ROWS)
     cards = []
-    for i in range(cap):
-        t = sv(df.iloc[i].get(S["tc"], "")) or f"Row {i}"
-        sub = sv(df.iloc[i].get(S["sc"], "")) if S["sc"] else ""
+    for row_id, row in enumerate(df.head(cap).iloc):
+        t = sv(row.get(S["tc"], "")) or f"Row {row_id}"
+        sub = sv(row.get(S["sc"], "")) if S["sc"] else ""
         sub_el = Div(sub, cls="rsub") if sub else Div()
-        sel = " sel" if S["sel"] == i else ""
+        sel = " sel" if S["sel"] == row_id else ""
         cards.append(Div(
-            Div(t, cls="rtitle"), sub_el, Div(f"Row {i}", cls="ridx"),
-            cls=f"rcard{sel}", hx_get=f"/row/{i}", hx_target="#detail", hx_trigger="click",
+            Div(t, cls="rtitle"), sub_el, Div(f"Row {row_id}", cls="ridx"),
+            cls=f"rcard{sel}", hx_get=f"/row/{row_id}", hx_target="#detail", hx_trigger="click",
         ))
     if len(df) > MAX_ROWS:
         cards.append(Div(f"Showing first {MAX_ROWS} of {len(df)} rows. Narrow your search.",
@@ -508,7 +497,7 @@ def layout(f=None):
         # ── Middle: Row list ──────────────────────────────────────────
         Div(
             Div(
-                Span(f"{cnt} of {total} rows", cls="count"),
+                Span(f"{cnt} of {total} rows", cls="count", id="row-count"),
                 Span(f"Sheet: {S['sheet']}") if S["sheet"] else Span(""),
                 cls="rbar"),
             Div(row_cards(f), cls="pnb", id="main-wrap"),
@@ -624,23 +613,17 @@ async def post(req: Request):
         if c not in submitted_ft: S["ft"].pop(c, None)
 
     f = filt()
-    # Return with headers for client-side count update
-    from fasthtml.common import Response
-    return Response(
-        content=Div(
-            Div(
-                Span(f"{len(f)} of {len(S['df'])} rows", cls="count"),
-                Span(f"Sheet: {S['sheet']}") if S["sheet"] else Span(""),
-                cls="rbar"),
-            Div(row_cards(f), cls="pnb", id="main-wrap"),
-        ),
-        headers={"X-Row-Count": f"{len(f)} of {len(S['df'])} rows"},
+    cnt = len(f)
+    total = len(S["df"]) if S["df"] is not None else 0
+    return Div(
+        Div(row_cards(f), cls="pnb", id="main-wrap"),
+        Div(Span(f"{cnt} of {total} rows", id="row-count"), hx_swap="oob", hx_target="#row-count"),
     )
 
 @rt("/row/{idx}")
 def get(idx: int):
-    if S["df"] is None or idx >= len(S["df"]):
-        return Div("Not found.", cls="empty")
+    if S["df"] is None or idx < 0 or idx >= len(S["df"]):
+        return detail_view(None)
     S["sel"] = idx
     return detail_view(idx)
 
