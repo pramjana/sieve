@@ -178,20 +178,31 @@ select option{background:var(--bg2);color:var(--txt)}
 
 JS = r"""
 document.addEventListener('DOMContentLoaded', () => {
-  // Drag-and-drop
-  const dz = document.getElementById('dropzone');
-  if (dz) {
-    const form = document.getElementById('upload-form');
-    ['dragenter','dragover'].forEach(e => dz.addEventListener(e, ev => { ev.preventDefault(); dz.classList.add('on'); }));
-    ['dragleave','drop'].forEach(e => dz.addEventListener(e, ev => { ev.preventDefault(); dz.classList.remove('on'); }));
-    dz.addEventListener('drop', ev => {
-      if (ev.dataTransfer.files.length && form) {
-        form.querySelector('input[type="file"]').files = ev.dataTransfer.files;
-        form.requestSubmit();
-      }
-    });
-    dz.addEventListener('click', () => form?.querySelector('input[type="file"]')?.click());
-  }
+  // Drag-and-drop. All handlers are DELEGATED to document: upload, sheet
+  // switches, and close replace #app via outerHTML, which destroys the
+  // dropzone element. Direct listeners would silently die with it.
+  const dropForm = () => document.getElementById('upload-form');
+  const inDropzone = ev => ev.target?.closest?.('#dropzone');
+  ['dragenter','dragover'].forEach(e => document.addEventListener(e, ev => {
+    const dz = inDropzone(ev); if (!dz) return;
+    ev.preventDefault(); dz.classList.add('on');
+  }));
+  ['dragleave','drop'].forEach(e => document.addEventListener(e, ev => {
+    const dz = inDropzone(ev); if (!dz) return;
+    ev.preventDefault(); dz.classList.remove('on');
+  }));
+  document.addEventListener('drop', ev => {
+    if (!inDropzone(ev)) return;
+    const form = dropForm();
+    if (ev.dataTransfer.files.length && form) {
+      form.querySelector('input[type="file"]').files = ev.dataTransfer.files;
+      form.requestSubmit();
+    }
+  });
+  document.addEventListener('click', ev => {
+    if (!inDropzone(ev)) return;
+    dropForm()?.querySelector('input[type="file"]')?.click();
+  });
 
   // Row selection highlighting
   document.addEventListener('click', ev => {
@@ -223,7 +234,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (cb) { cb.checked = all; c.classList.toggle('on', all); }
     });
     const form = group.matches('form') ? group : group.querySelector('form');
-    if (form) form.requestSubmit();
+    // Detail columns commit explicitly via Apply; their All/Clear buttons are
+    // pure client-side bulk toggles and must not auto-submit.
+    if (form && !form.closest('#detail-pick')) form.requestSubmit();
   });
 
   // The loaded-state Change control opens the existing hidden file input.
@@ -282,42 +295,55 @@ document.addEventListener('DOMContentLoaded', () => {
   overlay.innerHTML = '<div class="loading-spinner"></div>';
   document.body.appendChild(overlay);
   
-  document.body.addEventListener('htmx:beforeRequest', () => {
-    overlay.classList.add('active');
+  // Only heavyweight requests (upload, sheet switch, close) deserve a modal
+  // overlay; debounced search/filter requests would make it strobe and block
+  // typing.
+  const isHeavy = elt => !!elt?.closest?.('#upload-form, .stabs, [hx-post="/close"]');
+  document.body.addEventListener('htmx:beforeRequest', ev => {
+    if (isHeavy(ev.detail.elt)) overlay.classList.add('active');
   });
-  document.body.addEventListener('htmx:afterRequest', () => {
-    overlay.classList.remove('active');
+  document.body.addEventListener('htmx:afterRequest', ev => {
+    if (isHeavy(ev.detail.elt)) overlay.classList.remove('active');
   });
 
   // ── Panel resize ─────────────────────────────────────────────────────
-  const app = document.getElementById('app');
-  const left = document.getElementById('pnl-left');
-  const mid = document.getElementById('pnl-mid');
-  const right = document.getElementById('pnl-right');
+  // Delegated like everything else, and panels are looked up FRESH at drag
+  // time — full #app swaps replace them, so cached references go stale.
   let drag = null;
+  const panels = () => ({
+    left: document.getElementById('pnl-left'),
+    mid: document.getElementById('pnl-mid'),
+    right: document.getElementById('pnl-right'),
+  });
 
-  ['rh1', 'rh2'].forEach(id => {
-    const h = document.getElementById(id);
+  document.addEventListener('mousedown', ev => {
+    const h = ev.target?.closest?.('#rh1, #rh2');
     if (!h) return;
-    h.addEventListener('mousedown', ev => {
-      drag = { h, x: ev.clientX,
-        lw: left.offsetWidth, mw: mid.offsetWidth, rw: right.offsetWidth };
-      h.classList.add('drag');
-      document.body.style.cursor = 'col-resize';
-      ev.preventDefault();
-    });
+    const p = panels();
+    if (!p.left || !p.mid || !p.right) return;
+    drag = { h, x: ev.clientX,
+      lw: p.left.offsetWidth, mw: p.mid.offsetWidth, rw: p.right.offsetWidth };
+    h.classList.add('drag');
+    document.body.style.cursor = 'col-resize';
+    ev.preventDefault();
   });
 
   document.addEventListener('mousemove', ev => {
     if (!drag) return;
+    const p = panels();
     const dx = ev.clientX - drag.x;
-    const total = drag.lw + drag.mw + drag.rw;
     if (drag.h.id === 'rh1') {
-      const nw = Math.max(180, Math.min(total - 180 - 180, drag.lw + dx));
-      left.style.flex = `0 0 ${nw}px`;
+      // Drag right → left wider; the middle pane absorbs the delta so the
+      // total width stays constant.
+      const nw = Math.max(180, Math.min(drag.lw + drag.mw - 180, drag.lw + dx));
+      p.left.style.flex = `0 0 ${nw}px`;
+      p.mid.style.flex = `0 0 ${drag.lw + drag.mw - nw}px`;
     } else {
-      const nw = Math.max(180, Math.min(total - 180 - 180, drag.rw + dx));
-      right.style.flex = `0 0 ${nw}px`;
+      // rh2 sits at the right pane's LEFT edge: dragging right must SHRINK
+      // the right pane (rw - dx). The middle pane absorbs the delta.
+      const nw = Math.max(180, Math.min(drag.rw + drag.mw - 180, drag.rw - dx));
+      p.right.style.flex = `0 0 ${nw}px`;
+      p.mid.style.flex = `0 0 ${drag.rw + drag.mw - nw}px`;
     }
   });
 
@@ -348,7 +374,7 @@ S = dict(
 )
 
 TH = 50  # unique values <= this → multi-select chips
-MAX_ROWS = 10000  # cap rows rendered to browser
+MAX_ROWS = 500  # cap rows rendered to browser (DOM weight)
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 
 
@@ -398,10 +424,16 @@ def upload():
     loaded = S["filename"] != ""
     error = S.get("error", "")
     if error:
+        buttons = [Button("Upload Another", hx_post="/close", hx_target="#app", hx_swap="outerHTML",
+                          cls="btn bxs bp mt6")]
+        if S["df"] is not None:
+            # A good file is still loaded — let the user dismiss the error
+            # without wiping it.
+            buttons.insert(0, Button("Keep Current File", hx_post="/clear-error", hx_target="#app",
+                                     hx_swap="outerHTML", cls="btn bxs mt6"))
         return sect("File", Div(
             Span("⚠️", cls="dz-i"), P(error, cls="dz-f", style="color:var(--danger);"),
-            Button("Upload Another", hx_post="/close", hx_target="#app", hx_swap="outerHTML",
-                   cls="btn bxs bp mt6"),
+            Div(*buttons, style="display:flex;gap:4px;justify-content:center;"),
             style="border:1px solid var(--border);border-radius:var(--r);padding:14px;text-align:center;background:rgba(0,0,0,.15);",
         ))
     if loaded:
@@ -522,6 +554,8 @@ def col_filters():
     return Div(*gs)
 
 def row_cards(df):
+    if S["df"] is None:
+        return [Div("Upload a file to start browsing rows.", cls="empty")]
     if df.empty: return [Div("No matching rows.", cls="empty")]
     cap = min(len(df), MAX_ROWS)
     cards = []
@@ -548,7 +582,14 @@ def row_refresh(frame=None):
         frame = filt()
     sync_selection(frame)
     total = len(S["df"]) if S["df"] is not None else 0
-    return row_list(frame), Span(f"{len(frame)} of {total} rows", id="row-count", hx_swap_oob="true")
+    return (
+        row_list(frame),
+        Span(f"{len(frame)} of {total} rows", id="row-count", hx_swap_oob="true"),
+        # The selected row may have been filtered out (sync_selection cleared
+        # it) — reset the detail pane in lockstep so it never shows a row
+        # that is no longer in the list.
+        Div(detail_view(S["sel"]), cls="pnb", id="detail", hx_swap_oob="true"),
+    )
 
 def detail_view(row_i):
     if row_i is None or S["df"] is None:
@@ -592,7 +633,7 @@ def layout(f=None):
                 detail_pick(),
                 Div(
                     Label("Column Filters", cls="slbl"),
-                    Div(col_filters(), style="overflow-y:auto;flex:1;padding-top:6px;"),
+                    Div(col_filters(), id="col-filters", style="overflow-y:auto;flex:1;padding-top:6px;"),
                     style="flex:1;display:flex;flex-direction:column;min-height:0;",
                 ),
                 cls="pnb", id="sidebar"),
@@ -628,6 +669,7 @@ def get():
 @rt("/upload", methods=["POST"])
 def post(file: File):
     data = file.file.read()
+    file.file.close()  # release the spooled temp file promptly
     if len(data) > MAX_FILE_SIZE:
         S["error"] = f"File too large ({len(data)//(1024*1024)}MB). Max {MAX_FILE_SIZE//(1024*1024)}MB."
         return layout()
@@ -639,15 +681,11 @@ def post(file: File):
         if ext == ".csv":
             df = pd.read_csv(BytesIO(data))
             S["all_dfs"] = {"Sheet1": normalize_df(df)}
-            S["sheets"] = ["Sheet1"]
-        elif ext == ".xls":
-            xl = pd.ExcelFile(BytesIO(data), engine="xlrd")
-            S["all_dfs"] = {s: normalize_df(pd.read_excel(BytesIO(data), sheet_name=s)) for s in xl.sheet_names}
-            S["sheets"] = xl.sheet_names
         else:
-            xl = pd.ExcelFile(BytesIO(data))
-            S["all_dfs"] = {s: normalize_df(pd.read_excel(BytesIO(data), sheet_name=s)) for s in xl.sheet_names}
-            S["sheets"] = xl.sheet_names
+            # sheet_name=None parses the workbook ONCE and returns every
+            # sheet — twice as fast as ExcelFile + per-sheet read_excel.
+            S["all_dfs"] = {s: normalize_df(d) for s, d in pd.read_excel(BytesIO(data), sheet_name=None).items()}
+        S["sheets"] = list(S["all_dfs"].keys())
     except Exception as e:
         S["error"] = f"Error reading file: {e}"
         return layout()
@@ -671,6 +709,12 @@ def post():
               else "" if k in ("sheet","filename","tc","sc","search","error") else None
     return layout()
 
+@rt("/clear-error", methods=["POST"])
+def post():
+    """Dismiss an upload error while keeping the currently loaded file."""
+    S["error"] = None
+    return layout()
+
 @rt("/sheet", methods=["POST"])
 def post(s: str):
     if s not in S["all_dfs"]: return Div("Invalid.", cls="empty", id="main-wrap")
@@ -690,7 +734,12 @@ async def post(req: Request):
         S["tc"] = form.get("tc")
     if "sc" in form:
         S["sc"] = form.get("sc") if form.get("sc") in S["cols"] else ""
-    return row_refresh()
+    # col_filters() skips the title/subtitle columns at render time, so a
+    # tc/sc change must rebuild the sidebar filter groups out-of-band —
+    # otherwise the new title keeps a redundant filter and the demoted
+    # column never gets one.
+    return (*row_refresh(),
+            Div(col_filters(), id="col-filters", hx_swap_oob="true"))
 
 @rt("/cfg/detail-cols", methods=["POST"])
 async def post(req: Request):
@@ -736,4 +785,4 @@ def get(idx: int):
 # ═══════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8765)
+    uvicorn.run(app, host="127.0.0.1", port=8765)
