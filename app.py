@@ -200,6 +200,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('click', ev => {
     const chip = ev.target.closest('.chip');
     if (!chip) return;
+    ev.preventDefault();  // Prevent label's default toggle from interfering
     const cb = chip.querySelector('input[type="checkbox"]');
     if (cb) {
       cb.checked = !cb.checked;
@@ -479,7 +480,8 @@ def detail_view(row_i):
         return Div(Div(Span("\U0001f4cb", cls="ic"), H2("Select a Row"),
                        P("Click any row to inspect details."), cls="welcome"))
     row = S["df"].iloc[row_i]
-    cols = S["dc"] if S["dc"] else S["cols"]
+    # Use explicitly selected columns, or all if never configured
+    cols = S["dc"] if S["dc"] is not None else S["cols"]
     cells = [Div(Div(c, cls="lbl"), Div(sv(row.get(c, "")) or "", cls="val"), cls="dcell") for c in cols]
     return Div(
         H4(f"Row {row_i}", style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--accent)"),
@@ -573,7 +575,7 @@ def post(file: File):
     S["cols"] = list(S["df"].columns)
     S["tc"] = S["cols"][0] if S["cols"] else ""
     S["sc"] = S["cols"][1] if len(S["cols"]) > 1 else ""
-    S["dc"] = S["cols"][:]
+    S["dc"] = S["cols"][:]  # Initialize with all columns
     S["flt"] = {}; S["ft"] = {}; S["search"] = ""; S["sel"] = None
     return layout()
 
@@ -592,7 +594,7 @@ def post(s: str):
     S["cols"] = list(S["df"].columns)
     S["tc"] = S["cols"][0] if S["cols"] else ""
     S["sc"] = S["cols"][1] if len(S["cols"]) > 1 else ""
-    S["dc"] = S["cols"][:]
+    S["dc"] = S["cols"][:]  # Initialize with all columns
     S["flt"] = {}; S["ft"] = {}; S["search"] = ""; S["sel"] = None
     return layout()
 
@@ -603,19 +605,11 @@ def post(tc: str = "", sc: str = ""):
     return layout()
 
 @rt("/cfg/detail-cols", methods=["POST"])
-def post(dc: list[str] | None = None, dc_present: str | None = None):
-    if dc_present is not None:
-        # Form was submitted — update detail columns (even if empty)
-        S["dc"] = [c for c in (dc or []) if c in S["cols"]]
-    return detail_view(S["sel"])
-
-@rt("/cfg/detail-cols", methods=["POST"])
-def post(dc: list[str] | None = None, dc_present: str | None = None):
+def post(dc: list[str] | str | None = None, dc_present: str | None = None):
     """Update detail columns without replacing entire app."""
-    if dc_present is not None:  # form was submitted (even if no boxes checked)
-        S["dc"] = [c for c in (dc or []) if c in S["cols"]]
-    elif dc is not None:  # legacy: no sentinel but values provided
-        S["dc"] = [c for c in dc if c in S["cols"]]
+    if dc_present is not None:
+        vals = [] if dc is None else ([dc] if isinstance(dc, str) else dc)
+        S["dc"] = [c for c in vals if c in S["cols"]]
     return detail_view(S["sel"])
 
 @rt("/apply", methods=["POST"])
