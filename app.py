@@ -317,9 +317,9 @@ def upload():
         return sect("File", Div(
             Span("📂", cls="dz-i"), P(S["filename"], cls="dz-f"),
             Div(
-                Button("Change", hx_post="/upload", target="#app",
+                Button("Change", hx_post="/upload", hx_target="#app", hx_swap="outerHTML",
                        hx_include="#fi", hx_encoding="multipart/form-data", cls="btn bxs"),
-                Button("Close", hx_post="/close", target="#app", cls="btn bxs bc"),
+                Button("Close", hx_post="/close", hx_target="#app", hx_swap="outerHTML", cls="btn bxs bc"),
                 style="display:flex;gap:4px;margin-top:8px;",
             ),
             style="border:1px solid var(--border);border-radius:var(--r);padding:14px;text-align:center;background:rgba(0,0,0,.15);",
@@ -330,7 +330,7 @@ def upload():
         Form(
             Input(type="file", name="file", accept=".xlsx,.xls,.csv", id="fi", hidden=True),
             Button("Upload", type="submit", cls="btn bp wf mt6"),
-            hx_post="/upload", target="#app", hx_include="#fi",
+            hx_post="/upload", hx_target="#app", hx_swap="outerHTML", hx_include="#fi",
             hx_encoding="multipart/form-data", id="upload-form",
         ),
     )
@@ -339,7 +339,7 @@ def sheets():
     if not S["sheets"]: return Div()
     return sect("Sheet", Div(
         *(Button(n, cls=f"stab{' on' if n==S['sheet'] else ''}",
-                 hx_post="/sheet", target="#app",
+                 hx_post="/sheet", hx_target="#app", hx_swap="outerHTML",
                  name="s", value=n) for n in S["sheets"]),
         cls="stabs"
     ))
@@ -348,19 +348,19 @@ def title_pick():
     if not S["cols"]: return Div()
     return sect("Title Column",
         Select(*(Option(c, value=c, selected=(c==S["tc"])) for c in S["cols"]),
-               name="tc", hx_post="/cfg", target="#app", hx_trigger="change"))
+               name="tc", hx_post="/cfg", hx_target="#app", hx_swap="outerHTML", hx_trigger="change"))
 
 def sub_pick():
     if not S["cols"]: return Div()
     return sect("Subtitle Column",
         Select(Option("\u2014 none \u2014", value=""),
                *(Option(c, value=c, selected=(c==S["sc"])) for c in S["cols"]),
-               name="sc", hx_post="/cfg", target="#app", hx_trigger="change"))
+               name="sc", hx_post="/cfg", hx_target="#app", hx_swap="outerHTML", hx_trigger="change"))
 
 def search_box():
     return sect("Search", Input(type="search", name="search",
         placeholder="Search all columns\u2026", value=S["search"],
-        hx_post="/apply", target="#main-wrap", hx_trigger="input changed delay:200ms"))
+        hx_post="/apply", hx_target="#main-wrap", hx_trigger="input changed delay:200ms"))
 
 def detail_pick():
     if not S["cols"]: return Div()
@@ -375,7 +375,7 @@ def detail_pick():
             cls="fchips"),
         Form(
             Button("Apply", cls="btn bxs bp wf mt4"),
-            hx_post="/cfg", target="#app",
+            hx_post="/cfg", hx_target="#app", hx_swap="outerHTML",
         ),
     )
 
@@ -401,7 +401,7 @@ def col_filters():
                 Div(*chips, cls="fchips"),
                 Form(
                     Button("Apply", cls="btn bxs bp wf mt4"),
-                    hx_post="/apply", target="#main-wrap",
+                    hx_post="/apply", hx_target="#main-wrap",
                 ),
                 cls="fgrp",
             ))
@@ -409,7 +409,7 @@ def col_filters():
             gs.append(Div(
                 Span(f"Filter: {col}", cls="fgrp-t"),
                 Input(type="text", name=f"ft_{col}", placeholder=f"Filter {col}\u2026",
-                      value=ct, hx_post="/apply", target="#main-wrap",
+                      value=ct, hx_post="/apply", hx_target="#main-wrap",
                       hx_trigger="input changed delay:200ms", style="margin-top:3px;"),
                 cls="fgrp",
             ))
@@ -425,7 +425,7 @@ def row_cards(df):
         sel = " sel" if S["sel"] == i else ""
         cards.append(Div(
             Div(t, cls="rtitle"), sub_el, Div(f"Row {i}", cls="ridx"),
-            cls=f"rcard{sel}", hx_get=f"/row/{i}", target="#detail", hx_trigger="click",
+            cls=f"rcard{sel}", hx_get=f"/row/{i}", hx_target="#detail", hx_trigger="click",
         ))
     return Div(*cards)
 
