@@ -144,7 +144,22 @@ select option{background:var(--bg2);color:var(--txt)}
 
 /* Animations */
 @keyframes fadeIn{from{opacity:0;transform:translateY(-2px)}to{opacity:1;transform:none}}
+@keyframes spin{to{transform:rotate(360deg)}}
 .htmx-added{animation:fadeIn .15s ease}
+
+/* Loading indicator */
+.loading-overlay{
+  position:fixed;top:0;left:0;right:0;bottom:0;
+  background:rgba(11,8,24,0.7);backdrop-filter:blur(4px);
+  display:flex;align-items:center;justify-content:center;
+  z-index:9999;opacity:0;transition:opacity 0.2s;pointer-events:none;
+}
+.loading-overlay.active{opacity:1;pointer-events:auto}
+.loading-spinner{
+  width:40px;height:40px;border:3px solid var(--border);
+  border-top-color:var(--accent);border-radius:50%;
+  animation:spin 0.8s linear infinite;
+}
 
 /* Util */
 .mt4{margin-top:4px}.mt6{margin-top:6px}.mb4{margin-bottom:4px}
@@ -210,6 +225,20 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Update result count via HTMX header
+    // Loading indicator
+  const overlay = document.createElement('div');
+  overlay.className = 'loading-overlay';
+  overlay.innerHTML = '<div class="loading-spinner"></div>';
+  document.body.appendChild(overlay);
+  
+  document.body.addEventListener('htmx:beforeRequest', () => {
+    overlay.classList.add('active');
+  });
+  document.body.addEventListener('htmx:afterRequest', () => {
+    overlay.classList.remove('active');
+  });
+
+  // Update result count via HTMX header
   document.body.addEventListener('htmx:afterOnLoad', ev => {
     const count = ev.detail?.xhr?.getResponseHeader('X-Row-Count');
     if (count) {
@@ -240,11 +269,12 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('mousemove', ev => {
     if (!drag) return;
     const dx = ev.clientX - drag.x;
+    const total = drag.lw + drag.mw + drag.rw;
     if (drag.h.id === 'rh1') {
-      const nw = Math.max(180, drag.lw + dx);
+      const nw = Math.max(180, Math.min(total - 180 - 180, drag.lw + dx));
       left.style.flex = `0 0 ${nw}px`;
     } else {
-      const nw = Math.max(180, drag.rw + dx);
+      const nw = Math.max(180, Math.min(total - 180 - 180, drag.rw + dx));
       right.style.flex = `0 0 ${nw}px`;
     }
   });
@@ -276,6 +306,9 @@ S = dict(
 )
 
 TH = 50  # unique values <= this → multi-select chips
+MAX_ROWS = 10000  # cap rows rendered to browser
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -417,8 +450,10 @@ def col_filters():
 
 def row_cards(df):
     if df.empty: return Div("No matching rows.", cls="empty")
+    # Cap rendered rows to avoid browser crashes
+    cap = min(len(df), MAX_ROWS)
     cards = []
-    for i in range(len(df)):
+    for i in range(cap):
         t = sv(df.iloc[i].get(S["tc"], "")) or f"Row {i}"
         sub = sv(df.iloc[i].get(S["sc"], "")) if S["sc"] else ""
         sub_el = Div(sub, cls="rsub") if sub else Div()
@@ -427,6 +462,9 @@ def row_cards(df):
             Div(t, cls="rtitle"), sub_el, Div(f"Row {i}", cls="ridx"),
             cls=f"rcard{sel}", hx_get=f"/row/{i}", hx_target="#detail", hx_trigger="click",
         ))
+    if len(df) > MAX_ROWS:
+        cards.append(Div(f"Showing first {MAX_ROWS} of {len(df)} rows. Narrow your search.",
+                         cls="empty", style="margin-top:12px;color:var(--accent);"))
     return Div(*cards)
 
 def detail_view(row_i):
@@ -496,7 +534,13 @@ def get():
 @rt("/upload", methods=["POST"])
 def post(file: File):
     data = file.file.read()
+    if len(data) > MAX_FILE_SIZE:
+        return Div(f"File too large ({len(data)//(1024*1024)}MB). Max {MAX_FILE_SIZE//(1024*1024)}MB.",
+                   cls="empty", style="color:var(--danger);padding:24px;")
     ext = Path(file.filename).suffix.lower()
+    if ext not in (".csv", ".xls", ".xlsx"):
+        return Div("Unsupported file type. Upload .xlsx, .xls, or .csv.",
+                   cls="empty", style="color:var(--danger);padding:24px;")
     try:
         if ext == ".csv":
             df = pd.read_csv(BytesIO(data))
@@ -511,7 +555,7 @@ def post(file: File):
             S["all_dfs"] = {s: pd.read_excel(BytesIO(data), sheet_name=s) for s in xl.sheet_names}
             S["sheets"] = xl.sheet_names
     except Exception as e:
-        return Div(f"Error: {e}", cls="empty", id="main-wrap")
+        return Div(f"Error reading file: {e}", cls="empty", style="color:var(--danger);padding:24px;")
 
     S["sheet"] = S["sheets"][0]
     S["df"] = S["all_dfs"][S["sheet"]]
@@ -547,6 +591,7 @@ def post(tc: str = "", sc: str = "", dc: list[str] | None = None):
     if tc and tc in S["cols"]: S["tc"] = tc
     if sc: S["sc"] = sc
     if dc is not None: S["dc"] = [c for c in dc if c in S["cols"]]
+    # Preserve search/filter state
     return layout()
 
 @rt("/apply", methods=["POST"])
@@ -579,12 +624,17 @@ async def post(req: Request):
         if c not in submitted_ft: S["ft"].pop(c, None)
 
     f = filt()
-    return Div(
-        Div(
-            Span(f"{len(f)} of {len(S['df'])} rows", cls="count"),
-            Span(f"Sheet: {S['sheet']}") if S["sheet"] else Span(""),
-            cls="rbar"),
-        Div(row_cards(f), cls="pnb", id="main-wrap"),
+    # Return with headers for client-side count update
+    from fasthtml.common import Response
+    return Response(
+        content=Div(
+            Div(
+                Span(f"{len(f)} of {len(S['df'])} rows", cls="count"),
+                Span(f"Sheet: {S['sheet']}") if S["sheet"] else Span(""),
+                cls="rbar"),
+            Div(row_cards(f), cls="pnb", id="main-wrap"),
+        ),
+        headers={"X-Row-Count": f"{len(f)} of {len(S['df'])} rows"},
     )
 
 @rt("/row/{idx}")
