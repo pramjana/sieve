@@ -244,7 +244,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const nw = Math.max(180, drag.lw + dx);
       left.style.flex = `0 0 ${nw}px`;
     } else {
-      const nw = Math.max(180, drag.rw - dx);
+      const nw = Math.max(180, drag.rw + dx);
       right.style.flex = `0 0 ${nw}px`;
     }
   });
@@ -464,7 +464,7 @@ def layout(f=None):
                     style="flex:1;display:flex;flex-direction:column;min-height:0;",
                 ),
                 cls="pnb", id="sidebar"),
-            cls="pnl", style="flex:0 0 260px;", id="pnl-left"),
+            cls="pnl", style="flex:0 0 220px;", id="pnl-left"),
         # ── Resize handle ──────────────────────────────────────────────
         Div(cls="rh", id="rh1"),
         # ── Middle: Row list ──────────────────────────────────────────
@@ -474,14 +474,14 @@ def layout(f=None):
                 Span(f"Sheet: {S['sheet']}") if S["sheet"] else Span(""),
                 cls="rbar"),
             Div(row_cards(f), cls="pnb", id="main-wrap"),
-            cls="pnl", style="flex:1;", id="pnl-mid"),
+            cls="pnl", style="flex:0 0 360px;", id="pnl-mid"),
         # ── Resize handle ──────────────────────────────────────────────
         Div(cls="rh", id="rh2"),
         # ── Right: Detail ─────────────────────────────────────────────
         Div(
             Div(Span("Details", cls="stitle"), cls="pnh"),
             Div(detail_view(S["sel"]), cls="pnb", id="detail"),
-            cls="pnl", style="flex:0 0 320px;", id="pnl-right"),
+            cls="pnl", style="flex:1;", id="pnl-right"),
         cls="app", id="app")
 
 
