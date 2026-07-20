@@ -336,14 +336,27 @@ def sect(lbl, *ch):
 
 def upload():
     loaded = S["filename"] != ""
+    error = S.get("error", "")
+    if error:
+        return sect("File", Div(
+            Span("⚠️", cls="dz-i"), P(error, cls="dz-f", style="color:var(--danger);"),
+            Button("Upload Another", hx_post="/close", hx_target="#app", hx_swap="outerHTML",
+                   cls="btn bxs bp mt6"),
+            style="border:1px solid var(--border);border-radius:var(--r);padding:14px;text-align:center;background:rgba(0,0,0,.15);",
+        ))
     if loaded:
         return sect("File", Div(
             Span("📂", cls="dz-i"), P(S["filename"], cls="dz-f"),
-            Div(
-                Button("Change", hx_post="/upload", hx_target="#app", hx_swap="outerHTML",
-                       hx_include="#fi", hx_encoding="multipart/form-data", cls="btn bxs"),
-                Button("Close", hx_post="/close", hx_target="#app", hx_swap="outerHTML", cls="btn bxs bc"),
-                style="display:flex;gap:4px;margin-top:8px;",
+            Form(
+                Input(type="file", name="file", accept=".xlsx,.xls,.csv", id="fi", hidden=True),
+                Div(
+                    Button("Change", hx_post="/upload", hx_target="#app", hx_swap="outerHTML",
+                           hx_include="#fi", hx_encoding="multipart/form-data", cls="btn bxs"),
+                    Button("Close", hx_post="/close", hx_target="#app", hx_swap="outerHTML", cls="btn bxs bc"),
+                    style="display:flex;gap:4px;margin-top:8px;",
+                ),
+                hx_post="/upload", hx_target="#app", hx_swap="outerHTML", hx_include="#fi",
+                hx_encoding="multipart/form-data", id="upload-form",
             ),
             style="border:1px solid var(--border);border-radius:var(--r);padding:14px;text-align:center;background:rgba(0,0,0,.15);",
         ))
@@ -549,7 +562,10 @@ def post(file: File):
             S["all_dfs"] = {s: pd.read_excel(BytesIO(data), sheet_name=s) for s in xl.sheet_names}
             S["sheets"] = xl.sheet_names
     except Exception as e:
-        return Div(f"Error reading file: {e}", cls="empty", style="color:var(--danger);padding:24px;")
+        S["error"] = f"Error reading file: {e}"
+        return layout()
+
+    S["error"] = None
 
     S["sheet"] = S["sheets"][0]
     S["df"] = S["all_dfs"][S["sheet"]]
@@ -563,9 +579,9 @@ def post(file: File):
 
 @rt("/close", methods=["POST"])
 def post():
-    for k in ("df","all_dfs","sheets","sheet","filename","cols","tc","sc","dc","flt","ft","search","sel"):
+    for k in ("df","all_dfs","sheets","sheet","filename","cols","tc","sc","dc","flt","ft","search","sel","error"):
         S[k] = {} if k in ("all_dfs","flt","ft") else [] if k in ("sheets","cols","dc") \
-              else "" if k in ("sheet","filename","tc","sc","search") else None
+              else "" if k in ("sheet","filename","tc","sc","search","error") else None
     return layout()
 
 @rt("/sheet", methods=["POST"])
