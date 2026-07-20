@@ -103,6 +103,7 @@ select option{background:var(--bg2);color:var(--txt)}
   cursor:pointer;transition:all .12s;margin-bottom:3px}
 .rcard:hover{background:rgba(255,255,255,.06);border-color:var(--border)}
 .rcard.sel{background:var(--glow);border-color:var(--accent)}
+.rcard:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .rtitle{font-size:13px;font-weight:600;color:var(--txt2);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis}
 .rsub{font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -116,6 +117,10 @@ select option{background:var(--bg2);color:var(--txt)}
   letter-spacing:.7px;color:var(--muted);margin-bottom:3px}
 .dcell .val{font-size:12px;word-break:break-word;color:var(--txt2);line-height:1.4}
 .dcell .val:empty::before{content:"\2014";color:var(--muted)}
+.dhead{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.copy-btn{padding:1px 5px;border:1px solid var(--border);border-radius:3px;
+  background:transparent;color:var(--dim);font:inherit;font-size:9px;cursor:pointer}
+.copy-btn:hover,.copy-btn:focus-visible{border-color:var(--accent);color:var(--txt)}
 
 /* Chips */
 .fgrp{margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.03)}
@@ -196,18 +201,14 @@ document.addEventListener('DOMContentLoaded', () => {
     card.classList.add('sel');
   });
 
-  // Filter chip toggle → auto-submit
-  document.addEventListener('click', ev => {
-    const chip = ev.target.closest('.chip');
-    if (!chip) return;
-    ev.preventDefault();  // Prevent label's default toggle from interfering
-    const cb = chip.querySelector('input[type="checkbox"]');
-    if (cb) {
-      cb.checked = !cb.checked;
-      chip.classList.toggle('on', cb.checked);
-      const form = chip.closest('form') || chip.closest('.fgrp')?.querySelector('form') || chip.closest('.sect')?.querySelector('form');
-      if (form) form.requestSubmit();
-    }
+  // Keep chip styling in sync with native checkbox changes. Filter groups
+  // opt into auto-submit; detail columns are committed with Apply.
+  document.addEventListener('change', ev => {
+    const cb = ev.target.closest('.chip input[type="checkbox"]');
+    if (!cb) return;
+    const chip = cb.closest('.chip');
+    chip?.classList.toggle('on', cb.checked);
+    if (cb.form?.dataset.autosubmit === 'true') cb.form.requestSubmit();
   });
 
   // Select-all / Clear-all
@@ -221,12 +222,61 @@ document.addEventListener('DOMContentLoaded', () => {
       const cb = c.querySelector('input[type="checkbox"]');
       if (cb) { cb.checked = all; c.classList.toggle('on', all); }
     });
-    const form = group.querySelector('form');
+    const form = group.matches('form') ? group : group.querySelector('form');
     if (form) form.requestSubmit();
   });
 
-  // Update result count via HTMX header
-    // Loading indicator
+  // The loaded-state Change control opens the existing hidden file input.
+  document.addEventListener('click', ev => {
+    const opener = ev.target.closest('[data-open-file]');
+    if (!opener) return;
+    opener.closest('form')?.querySelector('input[type="file"]')?.click();
+  });
+  document.addEventListener('change', ev => {
+    if (ev.target.matches('#fi') && ev.target.files.length) ev.target.form?.requestSubmit();
+  });
+
+  // Row cards behave like a small keyboard-navigable list.
+  document.addEventListener('keydown', ev => {
+    const card = ev.target.closest('.rcard');
+    if (!card) return;
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      card.click();
+      return;
+    }
+    if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+    const cards = [...document.querySelectorAll('#main-wrap .rcard')];
+    const current = cards.indexOf(card);
+    const next = current + (ev.key === 'ArrowDown' ? 1 : -1);
+    if (next >= 0 && next < cards.length) {
+      ev.preventDefault();
+      cards[next].focus();
+    }
+  });
+
+  // Detail swaps should always start at the top of the pane.
+  document.body.addEventListener('htmx:afterSwap', ev => {
+    if (ev.detail.target?.id === 'detail') ev.detail.target.scrollTop = 0;
+  });
+
+  // Keep copying a value a deliberate, keyboard-accessible action.
+  document.addEventListener('click', async ev => {
+    const btn = ev.target.closest('[data-copy-value]');
+    if (!btn) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(btn.dataset.copyValue || '');
+      const original = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.textContent = original; }, 900);
+    } catch (_) {
+      btn.textContent = 'Copy failed';
+    }
+  });
+
+  // Loading indicator
   const overlay = document.createElement('div');
   overlay.className = 'loading-overlay';
   overlay.innerHTML = '<div class="loading-spinner"></div>';
@@ -300,7 +350,6 @@ S = dict(
 TH = 50  # unique values <= this → multi-select chips
 MAX_ROWS = 10000  # cap rows rendered to browser
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
-MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -310,15 +359,25 @@ MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 def sv(v):
     return "" if pd.isna(v) else str(v)
 
+def normalize_df(df):
+    """Give every loaded sheet a stable, unique row id for the session."""
+    return df.reset_index(drop=True)
+
+def sync_selection(frame):
+    if S["sel"] is not None and S["sel"] not in frame.index:
+        S["sel"] = None
+
 def filt():
     if S["df"] is None:
         return pd.DataFrame()
     r = S["df"]
     mask = pd.Series(True, index=r.index)
-    if S["search"]:
-        q = S["search"].lower()
+    q = S["search"].strip().lower()
+    if q:
+        search_mask = pd.Series(False, index=r.index)
         for c in r.columns:
-            mask &= r[c].astype(str).str.lower().str.contains(q, na=False, regex=False)
+            search_mask |= r[c].astype(str).str.lower().str.contains(q, na=False, regex=False)
+        mask &= search_mask
     for col, vals in S["flt"].items():
         if col in r.columns and vals:
             mask &= r[col].astype(str).isin(vals)
@@ -351,8 +410,7 @@ def upload():
             Form(
                 Input(type="file", name="file", accept=".xlsx,.xls,.csv", id="fi", hidden=True),
                 Div(
-                    Button("Change", hx_post="/upload", hx_target="#app", hx_swap="outerHTML",
-                           hx_include="#fi", hx_encoding="multipart/form-data", cls="btn bxs"),
+                    Button("Change", type="button", data_open_file="true", cls="btn bxs"),
                     Button("Close", hx_post="/close", hx_target="#app", hx_swap="outerHTML", cls="btn bxs bc"),
                     style="display:flex;gap:4px;margin-top:8px;",
                 ),
@@ -385,29 +443,32 @@ def title_pick():
     if not S["cols"]: return Div()
     return sect("Title Column",
         Select(*(Option(c, value=c, selected=(c==S["tc"])) for c in S["cols"]),
-               name="tc", hx_post="/cfg", hx_target="#app", hx_swap="outerHTML", hx_trigger="change"))
+               name="tc", hx_post="/cfg", hx_target="#main-wrap", hx_swap="outerHTML", hx_trigger="change"))
 
 def sub_pick():
     if not S["cols"]: return Div()
     return sect("Subtitle Column",
         Select(Option("\u2014 none \u2014", value=""),
                *(Option(c, value=c, selected=(c==S["sc"])) for c in S["cols"]),
-               name="sc", hx_post="/cfg", hx_target="#app", hx_swap="outerHTML", hx_trigger="change"))
+               name="sc", hx_post="/cfg", hx_target="#main-wrap", hx_swap="outerHTML", hx_trigger="change"))
 
 def search_box():
+    if S["df"] is None:
+        return Div()
     return Form(
         sect("Search", Input(type="search", name="search",
             placeholder="Search all columns\u2026", value=S["search"],
-            hx_post="/apply", hx_target="#main-wrap", hx_trigger="input changed delay:200ms")),
-        id="filter-form", hx_post="/apply", hx_target="#main-wrap",
+            hx_post="/apply", hx_target="#main-wrap", hx_swap="outerHTML",
+            hx_trigger="input changed delay:200ms")),
+        id="filter-form", hx_post="/apply", hx_target="#main-wrap", hx_swap="outerHTML",
     )
 
 def detail_pick():
     if not S["cols"]: return Div()
-    dc = S.get("dc") or S["cols"]
+    dc = S.get("dc", [])
     chips = [Label(Input(type="checkbox", name="dc", value=c, checked=(c in dc)),
                          c, cls=f"chip{' on' if c in dc else ''}") for c in S["cols"]]
-    return sect("Detail Columns",
+    return Div(sect("Detail Columns",
         Form(
             Div(
                 Button("All", cls="btn bxs", data_sel="", type="button"),
@@ -419,7 +480,7 @@ def detail_pick():
             Button("Apply", cls="btn bxs bp wf mt4"),
             hx_post="/cfg/detail-cols", hx_target="#detail",
         ),
-    )
+    ), id="detail-pick")
 
 def col_filters():
     if S["df"] is None or not S["cols"]: return Div()
@@ -444,7 +505,8 @@ def col_filters():
                     Div(*chips, cls="fchips"),
                     Input(type="hidden", name=f"f_{col}_present", value="1"),
                     Button("Apply", cls="btn bxs bp wf mt4"),
-                    hx_post="/apply", hx_target="#main-wrap", hx_include="#filter-form",
+                    hx_post="/apply", hx_target="#main-wrap", hx_swap="outerHTML",
+                    hx_include="#filter-form", data_autosubmit="true",
                 ),
                 cls="fgrp",
             ))
@@ -453,39 +515,60 @@ def col_filters():
                 Span(f"Filter: {col}", cls="fgrp-t"),
                 Input(type="text", name=f"ft_{col}", placeholder=f"Filter {col}\u2026",
                       value=ct, hx_post="/apply", hx_target="#main-wrap",
-                      hx_trigger="input changed delay:200ms", style="margin-top:3px;"),
+                      hx_swap="outerHTML", hx_trigger="input changed delay:250ms",
+                      hx_include="#filter-form", style="margin-top:3px;"),
                 cls="fgrp",
             ))
     return Div(*gs)
 
 def row_cards(df):
-    if df.empty: return Div("No matching rows.", cls="empty")
+    if df.empty: return [Div("No matching rows.", cls="empty")]
     cap = min(len(df), MAX_ROWS)
     cards = []
-    for row_id, row in enumerate(df.head(cap).iloc):
-        t = sv(row.get(S["tc"], "")) or f"Row {row_id}"
+    for row_id, row in df.head(cap).iterrows():
+        t = sv(row.get(S["tc"], "")) or f"Row {row_id + 1}"
         sub = sv(row.get(S["sc"], "")) if S["sc"] else ""
         sub_el = Div(sub, cls="rsub") if sub else Div()
         sel = " sel" if S["sel"] == row_id else ""
         cards.append(Div(
-            Div(t, cls="rtitle"), sub_el, Div(f"Row {row_id}", cls="ridx"),
-            cls=f"rcard{sel}", hx_get=f"/row/{row_id}", hx_target="#detail", hx_trigger="click",
+            Div(t, cls="rtitle"), sub_el, Div(f"Row {row_id + 1}", cls="ridx"),
+            cls=f"rcard{sel}", tabindex="0", role="button",
+            hx_get=f"/row/{row_id}", hx_target="#detail", hx_trigger="click",
         ))
     if len(df) > MAX_ROWS:
         cards.append(Div(f"Showing first {MAX_ROWS} of {len(df)} rows. Narrow your search.",
                          cls="empty", style="margin-top:12px;color:var(--accent);"))
-    return Div(*cards)
+    return cards
+
+def row_list(df):
+    return Div(*row_cards(df), cls="pnb", id="main-wrap")
+
+def row_refresh(frame=None):
+    if frame is None:
+        frame = filt()
+    sync_selection(frame)
+    total = len(S["df"]) if S["df"] is not None else 0
+    return row_list(frame), Span(f"{len(frame)} of {total} rows", id="row-count", hx_swap_oob="true")
 
 def detail_view(row_i):
     if row_i is None or S["df"] is None:
         return Div(Div(Span("\U0001f4cb", cls="ic"), H2("Select a Row"),
                        P("Click any row to inspect details."), cls="welcome"))
-    row = S["df"].iloc[row_i]
-    # Use explicitly selected columns, or all if never configured
-    cols = S["dc"] if S["dc"] is not None else S["cols"]
-    cells = [Div(Div(c, cls="lbl"), Div(sv(row.get(c, "")) or "", cls="val"), cls="dcell") for c in cols]
+    if row_i not in S["df"].index:
+        return Div(Div(Span("\U0001f4cb", cls="ic"), H2("Select a Row"),
+                       P("This row is no longer available."), cls="welcome"))
+    row = S["df"].loc[row_i]
+    cells = []
+    for c in S["dc"]:
+        value = sv(row.get(c, ""))
+        cells.append(Div(
+            Div(Div(c, cls="lbl"), Button("Copy", type="button", cls="copy-btn",
+                                           data_copy_value=value, title=f"Copy {c}"), cls="dhead"),
+            Div(value, cls="val"), cls="dcell"))
+    if not cells:
+        cells = [P("No detail columns selected.", cls="empty")]
     return Div(
-        H4(f"Row {row_i}", style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--accent)"),
+        H4(f"Row {row_i + 1}", style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--accent)"),
         Div(*cells, cls="dgrid"),
     )
 
@@ -495,6 +578,7 @@ def detail_view(row_i):
 
 def layout(f=None):
     if f is None: f = filt()
+    sync_selection(f)
     total = len(S["df"]) if S["df"] is not None else 0
     cnt = len(f)
     return Div(
@@ -521,7 +605,7 @@ def layout(f=None):
                 Span(f"{cnt} of {total} rows", cls="count", id="row-count"),
                 Span(f"Sheet: {S['sheet']}") if S["sheet"] else Span(""),
                 cls="rbar"),
-            Div(row_cards(f), cls="pnb", id="main-wrap"),
+            row_list(f),
             cls="pnl", style="flex:0 0 360px;", id="pnl-mid"),
         # ── Resize handle ──────────────────────────────────────────────
         Div(cls="rh", id="rh2"),
@@ -545,24 +629,24 @@ def get():
 def post(file: File):
     data = file.file.read()
     if len(data) > MAX_FILE_SIZE:
-        return Div(f"File too large ({len(data)//(1024*1024)}MB). Max {MAX_FILE_SIZE//(1024*1024)}MB.",
-                   cls="empty", style="color:var(--danger);padding:24px;")
+        S["error"] = f"File too large ({len(data)//(1024*1024)}MB). Max {MAX_FILE_SIZE//(1024*1024)}MB."
+        return layout()
     ext = Path(file.filename).suffix.lower()
     if ext not in (".csv", ".xls", ".xlsx"):
-        return Div("Unsupported file type. Upload .xlsx, .xls, or .csv.",
-                   cls="empty", style="color:var(--danger);padding:24px;")
+        S["error"] = "Unsupported file type. Upload .xlsx, .xls, or .csv."
+        return layout()
     try:
         if ext == ".csv":
             df = pd.read_csv(BytesIO(data))
-            S["all_dfs"] = {"Sheet1": df}
+            S["all_dfs"] = {"Sheet1": normalize_df(df)}
             S["sheets"] = ["Sheet1"]
         elif ext == ".xls":
             xl = pd.ExcelFile(BytesIO(data), engine="xlrd")
-            S["all_dfs"] = {s: pd.read_excel(BytesIO(data), sheet_name=s) for s in xl.sheet_names}
+            S["all_dfs"] = {s: normalize_df(pd.read_excel(BytesIO(data), sheet_name=s)) for s in xl.sheet_names}
             S["sheets"] = xl.sheet_names
         else:
             xl = pd.ExcelFile(BytesIO(data))
-            S["all_dfs"] = {s: pd.read_excel(BytesIO(data), sheet_name=s) for s in xl.sheet_names}
+            S["all_dfs"] = {s: normalize_df(pd.read_excel(BytesIO(data), sheet_name=s)) for s in xl.sheet_names}
             S["sheets"] = xl.sheet_names
     except Exception as e:
         S["error"] = f"Error reading file: {e}"
@@ -600,10 +684,13 @@ def post(s: str):
     return layout()
 
 @rt("/cfg", methods=["POST"])
-def post(tc: str = "", sc: str = ""):
-    if tc and tc in S["cols"]: S["tc"] = tc
-    if sc: S["sc"] = sc
-    return layout()
+async def post(req: Request):
+    form = await req.form()
+    if "tc" in form and form.get("tc") in S["cols"]:
+        S["tc"] = form.get("tc")
+    if "sc" in form:
+        S["sc"] = form.get("sc") if form.get("sc") in S["cols"] else ""
+    return row_refresh()
 
 @rt("/cfg/detail-cols", methods=["POST"])
 async def post(req: Request):
@@ -611,56 +698,36 @@ async def post(req: Request):
     form = await req.form()
     dc_present = form.get("dc_present")
     if dc_present is not None:
-        vals = form.getall("dc", [])  # Get ALL checked checkboxes
+        vals = form.getlist("dc")  # Get ALL checked checkboxes
         S["dc"] = [c for c in vals if c in S["cols"]]
-    # Return detail view + OOB swap for updated sidebar
-    return Div(
-        detail_view(S["sel"]),
-        Div(detail_pick(), id="detail-pick", hx_swap="oob"),
-    )
+    return detail_view(S["sel"])
 
 @rt("/apply", methods=["POST"])
 async def post(req: Request):
     form = await req.form()
-    # Partial update: only update fields present in form, preserve others
-    search = form.get("search", "")
-    S["search"] = search
+    if "search" in form:
+        S["search"] = str(form.get("search") or "")
+    for col in S["cols"]:
+        filter_key = f"f_{col}"
+        if f"{filter_key}_present" in form:
+            vals = form.getlist(filter_key)
+            if vals:
+                S["flt"][col] = set(vals)
+            else:
+                S["flt"].pop(col, None)
+        text_key = f"ft_{col}"
+        if text_key in form:
+            value = str(form.get(text_key) or "")
+            if value:
+                S["ft"][col] = value
+            else:
+                S["ft"].pop(col, None)
+    return row_refresh()
 
-    # Track which filter columns were submitted
-    submitted_flt = set()
-    submitted_ft = set()
-
-    for k, v in form.multi_items():
-        if k.startswith("f_") and not k.endswith("_present"):
-            c = k[2:]
-            submitted_flt.add(c)
-            vals = form.getlist(k)
-            S["flt"][c] = set(vals) if vals else set()
-            if not S["flt"][c]: S["flt"].pop(c, None)
-        elif k.startswith("ft_"):
-            c = k[3:]
-            submitted_ft.add(c)
-            S["ft"][c] = v if v else None
-            if S["ft"][c] is None: S["ft"].pop(c, None)
-
-    # Only clear filters for columns that were explicitly submitted with _present sentinel
-    for c in list(S["flt"].keys()):
-        if c in submitted_flt and f"f_{c}_present" in dict(form.multi_items()):
-            pass  # already handled above
-        elif c not in submitted_flt:
-            pass  # preserve existing filter
-
-    f = filt()
-    cnt = len(f)
-    total = len(S["df"]) if S["df"] is not None else 0
-    return Div(
-        Div(row_cards(f), cls="pnb", id="main-wrap"),
-        Div(Span(f"{cnt} of {total} rows", id="row-count"), hx_swap="oob", hx_target="#row-count"),
-    )
 
 @rt("/row/{idx}")
 def get(idx: int):
-    if S["df"] is None or idx < 0 or idx >= len(S["df"]):
+    if S["df"] is None or idx < 0 or idx not in S["df"].index:
         return detail_view(None)
     S["sel"] = idx
     return detail_view(idx)
