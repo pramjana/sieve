@@ -169,7 +169,15 @@ select option{background:var(--panel);color:var(--txt)}
 .fgrp-body{padding-top:6px}
 .fgrp-t{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;
   color:var(--dim);margin-bottom:4px}
-.fchips{display:flex;flex-wrap:wrap;gap:3px;max-height:80px;overflow-y:auto}
+/* Chip scroll boxes (Detail/Filter Columns pickers, filter groups).
+   .tall (many chips) gets a roomier default height and a JS drag handle
+   (.fchips-h, see resize grip JS) — native resize grips are too fiddly. */
+.fchips{display:flex;flex-wrap:wrap;gap:3px;overflow-y:auto;max-height:60vh}
+.fchips.tall{height:180px;min-height:48px}
+.fchips-h{height:10px;margin:2px 0 4px;cursor:row-resize;display:flex;
+  align-items:center;justify-content:center;flex-shrink:0;border-radius:3px}
+.fchips-h::after{content:"";width:28px;height:3px;border-radius:2px;background:var(--border2)}
+.fchips-h:hover::after,.fchips-h.drag::after{background:var(--accent)}
 .chip{display:inline-flex;align-items:center;gap:2px;padding:2px 7px;
   border-radius:3px;border:1px solid var(--border);font-family:var(--font-mono);font-size:10px;
   cursor:pointer;transition:all .12s;background:0 0;color:var(--dim);user-select:none}
@@ -481,6 +489,34 @@ document.addEventListener('DOMContentLoaded', () => {
       drag = null;
     }
   });
+
+  // ── Chip-box vertical resize ───────────────────────────────────────
+  // Drag handle under tall .fchips scroll boxes; sets an inline height
+  // (survives until the section re-renders; the tall default returns).
+  let vdrag = null;
+  document.addEventListener('mousedown', ev => {
+    const h = ev.target?.closest?.('.fchips-h');
+    if (!h) return;
+    const box = h.previousElementSibling;
+    if (!box?.classList.contains('fchips')) return;
+    vdrag = { box, h, y: ev.clientY, h0: box.offsetHeight };
+    h.classList.add('drag');
+    document.body.style.cursor = 'row-resize';
+    ev.preventDefault();
+  });
+  document.addEventListener('mousemove', ev => {
+    if (!vdrag) return;
+    const max = Math.round(window.innerHeight * 0.6);
+    vdrag.box.style.height =
+      `${Math.max(48, Math.min(max, vdrag.h0 + ev.clientY - vdrag.y))}px`;
+  });
+  document.addEventListener('mouseup', () => {
+    if (vdrag) {
+      vdrag.h.classList.remove('drag');
+      document.body.style.cursor = '';
+      vdrag = null;
+    }
+  });
 });
 """
 
@@ -648,6 +684,7 @@ def detail_pick():
     dc = S.get("dc", [])
     chips = [Label(Input(type="checkbox", name="dc", value=c, checked=(c in dc)),
                          c, cls=f"chip{' on' if c in dc else ''}") for c in S["cols"]]
+    tall = len(S["cols"]) > 12
     return Div(sect("Detail Columns",
         Form(
             Div(
@@ -655,7 +692,8 @@ def detail_pick():
                 Button("Clear", cls="btn bxs", data_clear="", type="button"),
                 style="display:flex;gap:3px;margin-bottom:4px;",
             ),
-            Div(*chips, cls="fchips"),
+            Div(*chips, cls=f"fchips{' tall' if tall else ''}"),
+            *( [Div(cls="fchips-h")] if tall else [] ),
             Input(type="hidden", name="dc_present", value="1"),
             Button("Apply", cls="btn bxs bp wf mt4"),
             hx_post="/cfg/detail-cols", hx_target="#detail",
@@ -670,6 +708,7 @@ def filter_pick():
     fc = S.get("fc", [])
     chips = [Label(Input(type="checkbox", name="fc", value=c, checked=(c in fc)),
                          c, cls=f"chip{' on' if c in fc else ''}") for c in S["cols"]]
+    tall = len(S["cols"]) > 12
     return Div(sect("Filter Columns",
         Input(type="search", id="fc-search", placeholder="Search columns…",
               autocomplete="off", aria_label="Filter column picker",
@@ -680,7 +719,8 @@ def filter_pick():
                 Button("Clear", cls="btn bxs", data_clear="", type="button"),
                 style="display:flex;gap:3px;margin-bottom:4px;",
             ),
-            Div(*chips, cls="fchips", id="fc-chips"),
+            Div(*chips, cls=f"fchips{' tall' if tall else ''}", id="fc-chips"),
+            *( [Div(cls="fchips-h")] if tall else [] ),
             Input(type="hidden", name="fc_present", value="1"),
             Button("Apply", cls="btn bxs bp wf mt4"),
             hx_post="/cfg/filter-cols", hx_target="#col-filters", hx_swap="outerHTML",
@@ -740,7 +780,8 @@ def filter_group_body(col):
             Div(Button("All", cls="btn bxs", data_sel="", type="button"),
                 Button("Clear", cls="btn bxs", data_clear="", type="button"),
                 style="display:flex;gap:3px;margin-bottom:3px;"),
-            Div(*chips, cls="fchips"),
+            Div(*chips, cls=f"fchips{' tall' if len(vals) > 12 else ''}"),
+            *( [Div(cls="fchips-h")] if len(vals) > 12 else [] ),
             Input(type="hidden", name=f"f_{col}_present", value="1"),
             Button("Apply", cls="btn bxs bp wf mt4"),
             hx_post="/apply", hx_target="#main-wrap", hx_swap="outerHTML",
