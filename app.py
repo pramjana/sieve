@@ -598,6 +598,90 @@ app = FastHTML(
 )
 rt = app.route
 
+from urllib.parse import urlsplit  # noqa: E402
+from starlette.datastructures import Headers, MutableHeaders  # noqa: E402
+from starlette.responses import Response  # noqa: E402
+
+# ── Local-tool hardening ──────────────────────────────────────────────────
+# The app has no auth by design (personal tool on 127.0.0.1). These two
+# middlewares close the realistic holes for that deployment: a random web
+# page CSRF-ing the state-changing POSTs, and DNS rebinding turning a
+# same-origin-looking attacker into a reader of the open spreadsheet.
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+def _host_name(h):
+    """Strip port from a Host header value; handles [::1]:8765."""
+    if h.startswith("["):
+        return h[1:h.index("]")] if "]" in h else h[1:]
+    return h.rsplit(":", 1)[0] if ":" in h else h
+
+def _host_ok(h):
+    name = _host_name(h or "")
+    # Loopback names always fine; test doubles like starlette's "testserver"
+    # (dotless) fine; ONLY dotted external names (rebinding candidates) fail.
+    return name in _LOOPBACK_HOSTS or "." not in name
+
+class HostCsrfGuard:
+    """Pure ASGI middleware (FastHTML exposes add_middleware, not the
+    Starlette decorator). Rejects dotted external Host headers — the DNS
+    rebinding candidate — and state-changing requests carrying a foreign
+    Origin. Origin-less requests (curl, tests) pass: only browsers send
+    Origin, and a browser WITH a foreign Origin is proof of cross-site."""
+
+    def __init__(self, inner_app):
+        self.inner = inner_app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.inner(scope, receive, send)
+        headers = Headers(scope=scope)
+        host = headers.get("host", "")
+        if not _host_ok(host):
+            return await Response("Forbidden", status_code=403)(scope, receive, send)
+        if scope["method"] in ("POST", "PUT", "PATCH", "DELETE"):
+            origin = headers.get("origin")
+            if origin:
+                netloc = urlsplit(origin).netloc
+                if netloc and netloc != host:
+                    return await Response("Forbidden", status_code=403)(scope, receive, send)
+        return await self.inner(scope, receive, send)
+
+_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; "
+        "connect-src 'self'; form-action 'self'; base-uri 'self'; "
+        "object-src 'none'; frame-ancestors 'none'")
+
+_SECURITY_HEADERS = {
+    "Content-Security-Policy": _CSP,
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "same-origin",
+}
+
+class SecurityHeaders:
+    """Pure ASGI middleware adding security headers to every response."""
+
+    def __init__(self, inner_app):
+        self.inner = inner_app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.inner(scope, receive, send)
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                h = MutableHeaders(raw=message["headers"])
+                for k, v in _SECURITY_HEADERS.items():
+                    h[k] = v
+                message = {**message, "headers": h.raw}
+            await send(message)
+
+        return await self.inner(scope, receive, send_wrapper)
+
+# Added first ⇒ innermost, so even 403s get security headers (headers wrap).
+app.add_middleware(HostCsrfGuard)
+app.add_middleware(SecurityHeaders)
+
 S = dict(
     df=None, all_dfs={}, sheets=[], sheet="",
     filename="", cols=[], tc="", sc="",
