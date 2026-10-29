@@ -176,6 +176,10 @@ select option{background:var(--panel);color:var(--txt)}
 .chip:hover{border-color:var(--accent);color:var(--txt)}
 .chip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .chip input{display:none}
+.colf-more{font-size:10px;color:var(--muted);padding:4px 2px 2px;
+  align-items:center;gap:6px;flex-wrap:wrap;display:none}
+.colf-more.on{display:flex}
+.cf-hide{display:none!important}
 
 /* Result bar */
 .rbar{display:flex;align-items:center;justify-content:space-between;
@@ -282,6 +286,66 @@ document.addEventListener('DOMContentLoaded', () => {
     // pure client-side bulk toggles and must not auto-submit.
     if (form && !form.closest('#detail-pick')) form.requestSubmit();
   });
+
+  // ── Column filter list: cap + name search ─────────────────────────
+  // Wide sheets render hundreds of lazy stubs; show at most CF_CAP (plus
+  // stubs with an active filter, which always stay visible). Stubs are
+  // cheap DOM, so capping/searching is pure client-side.
+  const CF_CAP = 30, CF_STEP = 50;
+  let cfShown = CF_CAP;
+  const applyColFilterView = () => {
+    const list = document.getElementById('col-filters');
+    const foot = document.getElementById('colf-more');
+    if (!list || !foot) return;
+    const stubs = [...list.querySelectorAll('.fgrp')];
+    const q = (document.getElementById('col-search')?.value || '').trim().toLowerCase();
+    const isActive = el => !!el.querySelector('.fgrp-on');
+    let rest = 0;
+    stubs.forEach(el => {
+      let vis;
+      if (q) vis = isActive(el) || el.textContent.toLowerCase().includes(q);
+      else if (isActive(el)) vis = true;
+      else { rest += 1; vis = rest <= cfShown; }
+      // Class-based (not inline style): htmx 2's settle pass re-clones
+      // style attributes from stale nodes after afterSwap, which clobbers
+      // any JS-set inline display. !important + afterSettle survives it.
+      el.classList.toggle('cf-hide', !vis);
+    });
+    const total = stubs.length;
+    const shown = stubs.filter(el => !el.classList.contains('cf-hide')).length;
+    foot.innerHTML = '';
+    foot.classList.toggle('on', shown < total);
+    if (shown >= total) return;
+    foot.append(`Showing ${shown} of ${total}${q ? ' matching' : ''}${q ? '' : ' — '}`);
+    if (!q) {
+      const b = document.createElement('button');
+      b.className = 'btn bxs'; b.type = 'button';
+      b.dataset.cfmore = '';
+      b.textContent = 'show more';
+      foot.append(b);
+    }
+  };
+  document.addEventListener('input', ev => {
+    if (ev.target?.id !== 'col-search') return;
+    cfShown = CF_CAP;
+    applyColFilterView();
+  });
+  document.addEventListener('click', ev => {
+    if (!ev.target?.closest?.('[data-cfmore]')) return;
+    cfShown += CF_STEP;
+    applyColFilterView();
+  });
+  // Re-apply after swaps (stubs may have been rebuilt). afterSettle is the
+  // one that actually sticks: it fires after htmx finishes cloning/attr
+  // fixups that would otherwise overwrite our visibility classes.
+  const cfReswap = ev => {
+    const id = ev.detail.target?.id;
+    if (id === 'app' || id === 'col-filters') cfShown = CF_CAP;
+    applyColFilterView();
+  };
+  document.body.addEventListener('htmx:afterSwap', cfReswap);
+  document.body.addEventListener('htmx:afterSettle', cfReswap);
+  applyColFilterView();
 
   // The loaded-state Change control opens the existing hidden file input.
   document.addEventListener('click', ev => {
@@ -614,6 +678,9 @@ def col_filters():
             cls="fgrp", hx_get=f"/filter/{i}", hx_trigger="toggle once",
             hx_target=f"#fgb-{i}", hx_swap="innerHTML",
         ))
+    # Caption content ("Showing X of Y" + show-more button) is managed by the
+    # sidebar cap JS; the server only ships the placeholder.
+    gs.append(Div(id="colf-more", cls="colf-more"))
     return Div(*gs)
 
 def filter_group_body(col):
@@ -725,6 +792,12 @@ def layout(f=None):
                 detail_pick(),
                 Div(
                     Label("Column Filters", cls="slbl"),
+                    # Outside #col-filters: survives the /cfg OOB rebuild and
+                    # keeps the typed query across sidebar refreshes.
+                    Input(type="search", id="col-search",
+                          placeholder="Search columns…", autocomplete="off",
+                          aria_label="Filter column list",
+                          style="margin-bottom:6px;"),
                     Div(col_filters(), id="col-filters", style="overflow-y:auto;flex:1;padding-top:6px;"),
                     style="flex:1;display:flex;flex-direction:column;min-height:0;",
                 ),

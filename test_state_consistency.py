@@ -111,6 +111,18 @@ class StateConsistencyTests(unittest.TestCase):
         self.assertNotIn('type="checkbox"', cf)
         self.assertNotIn('name="ft_', cf)
 
+    def test_sidebar_has_column_search_and_cap_footer(self):
+        from fasthtml.common import to_xml
+        html = to_xml(app.layout())
+        # Search box lives OUTSIDE #col-filters so the /cfg OOB rebuild
+        # preserves the query; the cap footer ships inside the stub list.
+        self.assertIn('id="col-search"', html)
+        search_pos = html.index('id="col-search"')
+        cf_start = html.index('id="col-filters"')
+        self.assertLess(search_pos, cf_start)
+        cf = to_xml(app.col_filters())
+        self.assertIn('id="colf-more"', cf)
+
     def test_sidebar_stub_badges_active_filters_without_pandas(self):
         app.S["flt"] = {"Category": {"fruit", "color"}}
         from fasthtml.common import to_xml
