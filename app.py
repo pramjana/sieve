@@ -8,7 +8,7 @@ from io import BytesIO
 
 import pandas as pd
 from fasthtml.common import (
-    FastHTML, Style, Script, File, htmxsrc, Request,
+    FastHTML, Style, Script, File, StaticFiles, Request,
     Button, Details, Div, Form, H2, H4, Input,
     Label, Option, P, Select, Span, Summary, Svg,
 )
@@ -592,10 +592,13 @@ HEAD_JS = ("try{var ok=['dark','light','frost','midnight'];"
            "document.documentElement.setAttribute('data-theme',t);}catch(e){"
            "document.documentElement.setAttribute('data-theme','frost');}")
 
+# htmx vendored (was fasthtml's htmxsrc → jsdelivr CDN): no runtime
+# third-party script fetch; version pinned to 2.0.7 in static/htmx.min.js.
 app = FastHTML(
-    hdrs=(Script(HEAD_JS), Style(CSS), htmxsrc, Script(JS)),
+    hdrs=(Script(HEAD_JS), Style(CSS), Script(src="/vendor/htmx.min.js"), Script(JS)),
     default_hdrs=False,
 )
+app.mount("/vendor", StaticFiles(directory=Path(__file__).resolve().parent / "static"))
 rt = app.route
 
 from urllib.parse import urlsplit  # noqa: E402
