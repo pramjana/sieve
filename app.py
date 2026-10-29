@@ -284,13 +284,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const form = group.matches('form') ? group : group.querySelector('form');
     // Detail columns commit explicitly via Apply; their All/Clear buttons are
     // pure client-side bulk toggles and must not auto-submit.
-    if (form && !form.closest('#detail-pick')) form.requestSubmit();
+    if (form && !form.closest('#detail-pick, #filter-pick')) form.requestSubmit();
   });
 
-  // ── Column filter list: cap + name search ─────────────────────────
-  // Wide sheets render hundreds of lazy stubs; show at most CF_CAP (plus
-  // stubs with an active filter, which always stay visible). Stubs are
-  // cheap DOM, so capping/searching is pure client-side.
+  // ── Filter chip search + filter-group cap ─────────────────────────
+  // #fc-search narrows the Filter Columns picker chips client-side.
+  // The group list shows at most CF_CAP stubs (plus stubs with an active
+  // filter, which always stay visible); capping is pure client-side.
   const CF_CAP = 30, CF_STEP = 50;
   let cfShown = CF_CAP;
   const applyColFilterView = () => {
@@ -298,13 +298,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const foot = document.getElementById('colf-more');
     if (!list || !foot) return;
     const stubs = [...list.querySelectorAll('.fgrp')];
-    const q = (document.getElementById('col-search')?.value || '').trim().toLowerCase();
     const isActive = el => !!el.querySelector('.fgrp-on');
     let rest = 0;
     stubs.forEach(el => {
       let vis;
-      if (q) vis = isActive(el) || el.textContent.toLowerCase().includes(q);
-      else if (isActive(el)) vis = true;
+      if (isActive(el)) vis = true;
       else { rest += 1; vis = rest <= cfShown; }
       // Class-based (not inline style): htmx 2's settle pass re-clones
       // style attributes from stale nodes after afterSwap, which clobbers
@@ -316,19 +314,18 @@ document.addEventListener('DOMContentLoaded', () => {
     foot.innerHTML = '';
     foot.classList.toggle('on', shown < total);
     if (shown >= total) return;
-    foot.append(`Showing ${shown} of ${total}${q ? ' matching' : ''}${q ? '' : ' — '}`);
-    if (!q) {
-      const b = document.createElement('button');
-      b.className = 'btn bxs'; b.type = 'button';
-      b.dataset.cfmore = '';
-      b.textContent = 'show more';
-      foot.append(b);
-    }
+    foot.append(`Showing ${shown} of ${total} — `);
+    const b = document.createElement('button');
+    b.className = 'btn bxs'; b.type = 'button';
+    b.dataset.cfmore = '';
+    b.textContent = 'show more';
+    foot.append(b);
   };
   document.addEventListener('input', ev => {
-    if (ev.target?.id !== 'col-search') return;
-    cfShown = CF_CAP;
-    applyColFilterView();
+    if (ev.target?.id !== 'fc-search') return;
+    const q = ev.target.value.trim().toLowerCase();
+    document.querySelectorAll('#fc-chips .chip').forEach(ch =>
+      ch.classList.toggle('cf-hide', !!q && !ch.textContent.toLowerCase().includes(q)));
   });
   document.addEventListener('click', ev => {
     if (!ev.target?.closest?.('[data-cfmore]')) return;
@@ -505,13 +502,17 @@ rt = app.route
 S = dict(
     df=None, all_dfs={}, sheets=[], sheet="",
     filename="", cols=[], tc="", sc="",
-    dc=[], flt={}, ft={}, search="", sel=None, error=None,
+    dc=[], fc=[], flt={}, ft={}, search="", sel=None, error=None,
 )
 
 TH = 50  # unique values <= this → multi-select chips
 MAX_ROWS = 500  # cap rows rendered to browser (DOM weight)
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 DC_DEFAULT = 10  # detail columns auto-selected on load; user can add more
+# Shared by layout() and every #col-filters rebuild (OOB/swap), or the
+# rebuilt pane loses its flex sizing.
+FILTERS_STYLE = "overflow-y:auto;flex:1;padding-top:6px;"
+FC_DEFAULT = 10  # filterable columns auto-selected on load; user picks via picker
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -520,6 +521,17 @@ DC_DEFAULT = 10  # detail columns auto-selected on load; user can add more
 
 def sv(v):
     return "" if pd.isna(v) else str(v)
+
+def form_cols(form, key):
+    """Checkbox values for column pickers, matched back to S["cols"].
+    Browsers normalize LF to CRLF when submitting control values, so real
+    multi-line column names ("Legacy\\nSCF #") must be normalized back."""
+    out = []
+    for v in form.getlist(key):
+        v = str(v).replace("\r\n", "\n")
+        if v in S["cols"] and v not in out:
+            out.append(v)
+    return out
 
 def normalize_df(df):
     """Give every loaded sheet a stable, unique row id for the session."""
@@ -650,6 +662,31 @@ def detail_pick():
         ),
     ), id="detail-pick")
 
+def filter_pick():
+    """Which columns get a filter group below — same chip/Apply pattern as
+    detail_pick. Lists ALL columns (explicit selection beats the old
+    tc/sc skip). #fc-search narrows the chips client-side."""
+    if S["df"] is None or not S["cols"]: return Div()
+    fc = S.get("fc", [])
+    chips = [Label(Input(type="checkbox", name="fc", value=c, checked=(c in fc)),
+                         c, cls=f"chip{' on' if c in fc else ''}") for c in S["cols"]]
+    return Div(sect("Filter Columns",
+        Input(type="search", id="fc-search", placeholder="Search columns…",
+              autocomplete="off", aria_label="Filter column picker",
+              style="margin-bottom:6px;"),
+        Form(
+            Div(
+                Button("All", cls="btn bxs", data_sel="", type="button"),
+                Button("Clear", cls="btn bxs", data_clear="", type="button"),
+                style="display:flex;gap:3px;margin-bottom:4px;",
+            ),
+            Div(*chips, cls="fchips", id="fc-chips"),
+            Input(type="hidden", name="fc_present", value="1"),
+            Button("Apply", cls="btn bxs bp wf mt4"),
+            hx_post="/cfg/filter-cols", hx_target="#col-filters", hx_swap="outerHTML",
+        ),
+    ), id="filter-pick")
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Filter groups (sidebar)
 # Wide sheets made the sidebar non-responsive: eagerly rendering a group per
@@ -664,7 +701,9 @@ def col_filters():
     if S["df"] is None or not S["cols"]: return Div()
     gs = []
     for i, col in enumerate(S["cols"]):
-        if col == S["tc"] or col == S["sc"]: continue
+        # Only columns explicitly picked in the Filter Columns picker get a
+        # group; explicit selection overrides the old tc/sc skip.
+        if col not in S.get("fc", []): continue
         nsel = len(S["flt"].get(col) or ())
         badge = Span(f"{nsel} selected", cls="fgrp-on") if nsel else (
             Span("text filter", cls="fgrp-on") if S["ft"].get(col) else None)
@@ -678,6 +717,8 @@ def col_filters():
             cls="fgrp", hx_get=f"/filter/{i}", hx_trigger="toggle once",
             hx_target=f"#fgb-{i}", hx_swap="innerHTML",
         ))
+    if not gs:
+        gs.append(Div("No filter columns selected.", cls="empty"))
     # Caption content ("Showing X of Y" + show-more button) is managed by the
     # sidebar cap JS; the server only ships the placeholder.
     gs.append(Div(id="colf-more", cls="colf-more"))
@@ -789,16 +830,10 @@ def layout(f=None):
                 cls="pnh"),
             Div(
                 upload(), sheets(), title_pick(), sub_pick(), search_box(),
-                detail_pick(),
+                detail_pick(), filter_pick(),
                 Div(
-                    Label("Column Filters", cls="slbl"),
-                    # Outside #col-filters: survives the /cfg OOB rebuild and
-                    # keeps the typed query across sidebar refreshes.
-                    Input(type="search", id="col-search",
-                          placeholder="Search columns…", autocomplete="off",
-                          aria_label="Filter column list",
-                          style="margin-bottom:6px;"),
-                    Div(col_filters(), id="col-filters", style="overflow-y:auto;flex:1;padding-top:6px;"),
+                    Label("Filters", cls="slbl"),
+                    Div(col_filters(), id="col-filters", style=FILTERS_STYLE),
                     style="flex:1;display:flex;flex-direction:column;min-height:0;",
                 ),
                 cls="pnb", id="sidebar"),
@@ -872,13 +907,14 @@ def post(req: Request, file: File):
     S["tc"] = S["cols"][0] if S["cols"] else ""
     S["sc"] = S["cols"][1] if len(S["cols"]) > 1 else ""
     S["dc"] = S["cols"][:DC_DEFAULT]
+    S["fc"] = S["cols"][:FC_DEFAULT]
     S["flt"] = {}; S["ft"] = {}; S["search"] = ""; S["sel"] = None
     return layout()
 
 @rt("/close", methods=["POST"])
 def post():
-    for k in ("df","all_dfs","sheets","sheet","filename","cols","tc","sc","dc","flt","ft","search","sel","error"):
-        S[k] = {} if k in ("all_dfs","flt","ft") else [] if k in ("sheets","cols","dc") \
+    for k in ("df","all_dfs","sheets","sheet","filename","cols","tc","sc","dc","fc","flt","ft","search","sel","error"):
+        S[k] = {} if k in ("all_dfs","flt","ft") else [] if k in ("sheets","cols","dc","fc") \
               else "" if k in ("sheet","filename","tc","sc","search","error") else None
     return layout()
 
@@ -897,6 +933,7 @@ def post(s: str):
     S["tc"] = S["cols"][0] if S["cols"] else ""
     S["sc"] = S["cols"][1] if len(S["cols"]) > 1 else ""
     S["dc"] = S["cols"][:DC_DEFAULT]
+    S["fc"] = S["cols"][:FC_DEFAULT]
     S["flt"] = {}; S["ft"] = {}; S["search"] = ""; S["sel"] = None
     return layout()
 
@@ -912,7 +949,8 @@ async def post(req: Request):
     # otherwise the new title keeps a redundant filter and the demoted
     # column never gets one.
     return (*row_refresh(),
-            Div(col_filters(), id="col-filters", hx_swap_oob="true"))
+            Div(col_filters(), id="col-filters", style=FILTERS_STYLE,
+                hx_swap_oob="true"))
 
 @rt("/cfg/detail-cols", methods=["POST"])
 async def post(req: Request):
@@ -920,9 +958,21 @@ async def post(req: Request):
     form = await req.form()
     dc_present = form.get("dc_present")
     if dc_present is not None:
-        vals = form.getlist("dc")  # Get ALL checked checkboxes
-        S["dc"] = [c for c in vals if c in S["cols"]]
+        S["dc"] = form_cols(form, "dc")  # ALL checked, matched back to S["cols"]
     return detail_view(S["sel"])
+
+@rt("/cfg/filter-cols", methods=["POST"])
+async def post(req: Request):
+    """Update filterable columns; rebuild the filter group list in place."""
+    form = await req.form()
+    if form.get("fc_present") is not None:
+        chosen = set(form_cols(form, "fc"))
+        # Deselecting a column also drops its active filter values, so a
+        # hidden column never silently keeps filtering rows.
+        for c in set(S["fc"]) - chosen:
+            S["flt"].pop(c, None); S["ft"].pop(c, None)
+        S["fc"] = [c for c in S["cols"] if c in chosen]  # stable column order
+    return Div(col_filters(), id="col-filters", style=FILTERS_STYLE)
 
 @rt("/apply", methods=["POST"])
 async def post(req: Request):

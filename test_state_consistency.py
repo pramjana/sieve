@@ -25,8 +25,8 @@ class StateConsistencyTests(unittest.TestCase):
         app.S.update(
             df=frame, all_dfs={"Sheet1": frame}, sheets=["Sheet1"],
             sheet="Sheet1", filename="demo.csv", cols=list(frame.columns),
-            tc="Name", sc="Note", dc=list(frame.columns), flt={}, ft={},
-            search="", sel=None, error=None,
+            tc="Name", sc="Note", dc=list(frame.columns), fc=list(frame.columns),
+            flt={}, ft={}, search="", sel=None, error=None,
         )
         self.client = TestClient(app.app)
         self.htmx = {"HX-Request": "true"}
@@ -103,7 +103,6 @@ class StateConsistencyTests(unittest.TestCase):
     def test_sidebar_renders_lazy_stubs_only(self):
         from fasthtml.common import to_xml
         cf = to_xml(app.col_filters())
-        # cols 0/1 are tc/sc and excluded, so the first stub is index 2
         self.assertIn('hx-get="/filter/2"', cf)
         self.assertIn('id="fgb-2"', cf)
         self.assertIn('hx-trigger="toggle once"', cf)
@@ -111,17 +110,53 @@ class StateConsistencyTests(unittest.TestCase):
         self.assertNotIn('type="checkbox"', cf)
         self.assertNotIn('name="ft_', cf)
 
-    def test_sidebar_has_column_search_and_cap_footer(self):
+    def test_sidebar_has_picker_search_and_cap_footer(self):
         from fasthtml.common import to_xml
         html = to_xml(app.layout())
-        # Search box lives OUTSIDE #col-filters so the /cfg OOB rebuild
-        # preserves the query; the cap footer ships inside the stub list.
-        self.assertIn('id="col-search"', html)
-        search_pos = html.index('id="col-search"')
-        cf_start = html.index('id="col-filters"')
-        self.assertLess(search_pos, cf_start)
+        # Column search lives in the Filter Columns picker, above the
+        # #col-filters group list; the cap footer ships inside it.
+        self.assertIn('id="fc-search"', html)
+        self.assertIn('id="filter-pick"', html)
+        self.assertLess(html.index('id="fc-search"'), html.index('id="col-filters"'))
         cf = to_xml(app.col_filters())
         self.assertIn('id="colf-more"', cf)
+
+    # ── Filter Columns picker (like Detail Columns) ────────────────────
+    def test_upload_defaults_to_first_fc_columns(self):
+        orig = app.FC_DEFAULT
+        app.FC_DEFAULT = 2
+        try:
+            with open("test.csv", "rb") as f:
+                self.client.post(
+                    "/upload", files={"file": ("test.csv", f, "text/csv")},
+                    headers=self.htmx,
+                )
+        finally:
+            app.FC_DEFAULT = orig
+        self.assertEqual(app.S["fc"], app.S["cols"][:2])
+
+    def test_col_filters_renders_only_selected_columns(self):
+        from fasthtml.common import to_xml
+        app.S["fc"] = ["Category"]
+        cf = to_xml(app.col_filters())
+        self.assertIn('hx-get="/filter/2"', cf)  # Category
+        self.assertNotIn('hx-get="/filter/0"', cf)  # Name not selected
+        self.assertNotIn('hx-get="/filter/1"', cf)  # Note not selected
+
+    def test_cfg_filter_cols_updates_fc_and_drops_removed_filters(self):
+        app.S["flt"] = {"Note": {"red"}, "Category": {"fruit"}}
+        app.S["ft"] = {"Name": "alpha"}
+        response = self.client.post(
+            "/cfg/filter-cols",
+            data={"fc_present": "1", "fc": ["Category"]},
+            headers=self.htmx,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(app.S["fc"], ["Category"])
+        self.assertNotIn("Note", app.S["flt"])  # deselected → filter removed
+        self.assertNotIn("Name", app.S["ft"])
+        self.assertEqual(app.S["flt"]["Category"], {"fruit"})  # kept
+        self.assertIn('id="col-filters"', response.text)
 
     def test_sidebar_stub_badges_active_filters_without_pandas(self):
         app.S["flt"] = {"Category": {"fruit", "color"}}
