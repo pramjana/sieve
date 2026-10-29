@@ -10,9 +10,10 @@ import pandas as pd
 from fasthtml.common import (
     FastHTML, Style, Script, File, htmxsrc, Request,
     Button, Details, Div, Form, H2, H4, Input,
-    Label, Option, P, Select, Span, Summary, Svg, Path,
+    Label, Option, P, Select, Span, Summary, Svg,
 )
-from fasthtml.svg import Circle
+from pathlib import Path  # used for upload filename suffix only
+from fasthtml.svg import Circle, Path as SvgPath  # NOT fasthtml.common.Path — that's pathlib.Path!
 
 # ═══════════════════════════════════════════════════════════════════════════
 # CSS
@@ -929,7 +930,7 @@ def settings_pop():
     # Feather "settings" icon (MIT), stroke-based so it picks up --dim.
     gear = Svg(
         Circle(cx="12", cy="12", r="3"),
-        Path(d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0"
+        SvgPath(d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0"
              " 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21"
              "a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0"
              " 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65"

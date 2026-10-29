@@ -236,6 +236,9 @@ class StateConsistencyTests(unittest.TestCase):
         for key in ("dark", "light", "frost", "midnight"):
             self.assertIn(f'data-theme-opt="{key}"', html)
         self.assertNotIn('id="theme-toggle"', html)
+        # Gear icon must be a real SVG path — fasthtml.common.Path is
+        # pathlib.Path and silently renders "." instead.
+        self.assertIn('<path d="M19.4', html)
 
     def test_frost_midnight_theme_blocks(self):
         self.assertIn('[data-theme="frost"]', app.CSS)
