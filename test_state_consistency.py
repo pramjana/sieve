@@ -227,5 +227,24 @@ class StateConsistencyTests(unittest.TestCase):
         self.assertIn("demo.csv", response.text)
 
 
+    # ── Theme settings popover + Frost/Midnight themes ────────────────
+    def test_layout_has_settings_button_and_theme_options(self):
+        from fasthtml.common import to_xml
+        html = to_xml(app.layout())
+        self.assertIn('id="settings-btn"', html)
+        self.assertIn('id="theme-pop"', html)
+        for key in ("dark", "light", "frost", "midnight"):
+            self.assertIn(f'data-theme-opt="{key}"', html)
+        self.assertNotIn('id="theme-toggle"', html)
+
+    def test_frost_midnight_theme_blocks(self):
+        self.assertIn('[data-theme="frost"]', app.CSS)
+        self.assertIn('[data-theme="midnight"]', app.CSS)
+
+    def test_head_js_defaults_to_frost(self):
+        self.assertIn("'frost'", app.HEAD_JS)
+        self.assertIn("ok.indexOf(t)<0", app.HEAD_JS)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,8 +10,9 @@ import pandas as pd
 from fasthtml.common import (
     FastHTML, Style, Script, File, htmxsrc, Request,
     Button, Details, Div, Form, H2, H4, Input,
-    Label, Option, P, Select, Span, Summary,
+    Label, Option, P, Select, Span, Summary, Svg, Path,
 )
+from fasthtml.svg import Circle
 
 # ═══════════════════════════════════════════════════════════════════════════
 # CSS
@@ -19,9 +20,11 @@ from fasthtml.common import (
 
 CSS = r"""
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-/* "Ink & Paper" — two palettes, one design language: flat panels, hairline
-   rules, antique-brass accent, serif headings with mono numerals. Dark "Ink"
-   is the default; [data-theme="light"] swaps to "Paper". Every surface color
+/* Four palettes, two design languages. "Ink" (dark, the CSS default) and
+   "Paper" (light) share flat panels, hairline rules, antique-brass accent,
+   serif headings with mono numerals. "Frost" (Apple light) and "Midnight"
+   (true-black Apple dark) use SF Pro stacks, larger radii, blue accent.
+   Selected via [data-theme="…"] on <html> (see HEAD_JS). Every surface color
    is a token — a theme is just a var block. */
 :root{
   --bg:#131519;--bg2:#181b21;--bg3:#101217;
@@ -52,6 +55,38 @@ CSS = r"""
   --danger:#c02f3e;--success:#1e8a4c;
   --overlay:rgba(242,239,232,.82);
   --panel-shadow:0 1px 2px rgba(60,50,30,.08),0 6px 24px rgba(60,50,30,.1);
+}
+[data-theme="frost"]{
+  --bg:#f5f5f7;--bg2:#ebebed;--bg3:#fbfbfd;
+  --panel:#ffffff;--panel2:#f5f5f7;
+  --accent:#0071e3;--accent2:#0077ed;--accent-ink:#ffffff;
+  --glow:rgba(0,113,227,.1);--glow2:rgba(0,113,227,.25);
+  --border:rgba(0,0,0,.12);--border2:rgba(0,0,0,.25);
+  --hairline:rgba(0,0,0,.06);--hover:rgba(0,0,0,.04);--hover2:rgba(0,0,0,.06);
+  --field:#ffffff;--cell:#f5f5f7;--dz-bg:#fbfbfd;
+  --txt:#33333a;--txt2:#1d1d1f;--dim:#6e6e73;--muted:#86868b;
+  --danger:#d70015;--success:#248a3d;
+  --overlay:rgba(245,245,247,.8);
+  --panel-shadow:0 1px 2px rgba(0,0,0,.06),0 8px 24px rgba(0,0,0,.08);
+  --r:12px;--rs:8px;
+  --font-ui:-apple-system,BlinkMacSystemFont,'SF Pro Text','Inter','Helvetica Neue',system-ui,sans-serif;
+  --font-serif:-apple-system,BlinkMacSystemFont,'SF Pro Display','Inter','Helvetica Neue',system-ui,sans-serif;
+}
+[data-theme="midnight"]{
+  --bg:#000000;--bg2:#0b0b0d;--bg3:#000000;
+  --panel:#1c1c1e;--panel2:#2c2c2e;
+  --accent:#0a84ff;--accent2:#409cff;--accent-ink:#ffffff;
+  --glow:rgba(10,132,255,.14);--glow2:rgba(10,132,255,.3);
+  --border:rgba(255,255,255,.14);--border2:rgba(255,255,255,.28);
+  --hairline:rgba(255,255,255,.07);--hover:rgba(255,255,255,.05);--hover2:rgba(255,255,255,.08);
+  --field:rgba(255,255,255,.08);--cell:rgba(255,255,255,.04);--dz-bg:rgba(255,255,255,.05);
+  --txt:#d1d1d6;--txt2:#f5f5f7;--dim:#98989d;--muted:#6c6c72;
+  --danger:#ff453a;--success:#30d158;
+  --overlay:rgba(0,0,0,.72);
+  --panel-shadow:0 1px 3px rgba(0,0,0,.5),0 8px 28px rgba(0,0,0,.45);
+  --r:12px;--rs:8px;
+  --font-ui:-apple-system,BlinkMacSystemFont,'SF Pro Text','Inter','Helvetica Neue',system-ui,sans-serif;
+  --font-serif:-apple-system,BlinkMacSystemFont,'SF Pro Display','Inter','Helvetica Neue',system-ui,sans-serif;
 }
 html,body{height:100%;width:100%;font-family:var(--font-ui);
   background:var(--bg);color:var(--txt);font-size:13.5px;line-height:1.5;
@@ -92,6 +127,19 @@ html,body{height:100%;width:100%;font-family:var(--font-ui);
   color:var(--dim);font-family:var(--font-ui);font-size:10px;letter-spacing:.04em;
   cursor:pointer;transition:all .15s}
 .theme-btn:hover,.theme-btn:focus-visible{border-color:var(--accent);color:var(--txt2)}
+.tpop{position:absolute;top:38px;right:10px;z-index:60;display:none;min-width:168px;
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  box-shadow:var(--panel-shadow);padding:4px}
+.tpop.open{display:block}
+.tpop-h{font-size:10px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--muted);padding:6px 10px 4px}
+.topt{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--rs);
+  cursor:pointer;font-size:12px;color:var(--txt)}
+.topt:hover{background:var(--hover)}
+.topt.on{color:var(--txt2)}
+.tsw{width:14px;height:14px;border-radius:50%;border:1px solid var(--border2);flex-shrink:0}
+.tck{margin-left:auto;visibility:hidden;color:var(--accent);font-weight:600}
+.topt.on .tck{visibility:visible}
 .sect{margin-bottom:14px}
 .slbl{display:block;font-size:10px;font-weight:600;text-transform:uppercase;
   letter-spacing:.09em;color:var(--muted);margin-bottom:5px}
@@ -362,21 +410,33 @@ document.addEventListener('DOMContentLoaded', () => {
     if (ev.target.matches('#fi') && ev.target.files.length) ev.target.form?.requestSubmit();
   });
 
-  // Theme toggle — state lives on <html> (see HEAD_JS), persisted in
-  // localStorage; delegated so it survives full #app swaps.
-  const syncThemeBtn = () => {
-    const b = document.getElementById('theme-toggle');
-    if (b) b.textContent = document.documentElement.dataset.theme === 'light' ? 'Dark' : 'Light';
+  // Theme picker — state lives on <html> (see HEAD_JS), persisted in
+  // localStorage; popover opens from the gear button. All handlers are
+  // delegated so they survive full #app swaps. Open/close is class-based
+  // (htmx re-clones inline styles after swaps).
+  const closePop = () => { const p = document.getElementById('theme-pop'); if (p) p.classList.remove('open'); };
+  const syncThemeOpts = () => {
+    const t = document.documentElement.dataset.theme;
+    document.querySelectorAll('[data-theme-opt]').forEach(o => o.classList.toggle('on', o.dataset.themeOpt === t));
   };
+  function setTheme(t) {
+    document.documentElement.dataset.theme = t;
+    try { localStorage.setItem('xv-theme', t); } catch (_) {}
+    syncThemeOpts();
+  }
   document.addEventListener('click', ev => {
-    if (!ev.target.closest('#theme-toggle')) return;
-    const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-    document.documentElement.dataset.theme = next;
-    try { localStorage.setItem('xv-theme', next); } catch (_) {}
-    syncThemeBtn();
+    if (ev.target.closest('#settings-btn')) {
+      const p = document.getElementById('theme-pop');
+      if (p) { const was = p.classList.contains('open'); closePop(); syncThemeOpts(); if (!was) p.classList.add('open'); }
+      return;
+    }
+    const o = ev.target.closest('[data-theme-opt]');
+    if (o) { setTheme(o.dataset.themeOpt); closePop(); return; }
+    if (!ev.target.closest('#theme-pop')) closePop();
   });
-  document.body.addEventListener('htmx:afterSwap', syncThemeBtn);
-  syncThemeBtn();
+  document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closePop(); });
+  document.body.addEventListener('htmx:afterSwap', syncThemeOpts);
+  syncThemeOpts();
 
   // Row cards behave like a small keyboard-navigable list.
   document.addEventListener('keydown', ev => {
@@ -525,9 +585,11 @@ document.addEventListener('DOMContentLoaded', () => {
 # ═══════════════════════════════════════════════════════════════════════════
 
 # Runs before first paint so the stored theme never flashes the wrong palette.
-HEAD_JS = ("try{var t=localStorage.getItem('xv-theme');"
-           "if(!t)t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';"
-           "document.documentElement.setAttribute('data-theme',t);}catch(e){}")
+HEAD_JS = ("try{var ok=['dark','light','frost','midnight'];"
+           "var t=localStorage.getItem('xv-theme');"
+           "if(ok.indexOf(t)<0)t='frost';"
+           "document.documentElement.setAttribute('data-theme',t);}catch(e){"
+           "document.documentElement.setAttribute('data-theme','frost');}")
 
 app = FastHTML(
     hdrs=(Script(HEAD_JS), Style(CSS), htmxsrc, Script(JS)),
@@ -856,6 +918,38 @@ def detail_view(row_i):
 # Layout
 # ═══════════════════════════════════════════════════════════════════════════
 
+THEMES = {  # data-theme key: (display name, popover swatch panel bg, swatch accent)
+    "dark":     ("Ink",       "#1b1e24", "#c9a45c"),
+    "light":    ("Paper",     "#fbfaf6", "#8a6a1f"),
+    "frost":    ("Frost",     "#ffffff", "#0071e3"),
+    "midnight": ("Midnight",  "#1c1c1e", "#0a84ff"),
+}
+
+def settings_pop():
+    # Feather "settings" icon (MIT), stroke-based so it picks up --dim.
+    gear = Svg(
+        Circle(cx="12", cy="12", r="3"),
+        Path(d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0"
+             " 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21"
+             "a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0"
+             " 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65"
+             " 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0"
+             " 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2"
+             " 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1"
+             ".65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0"
+             " 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0"
+             " 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51"
+             " 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"),
+        viewBox="0 0 24 24", width="14", height="14", fill="none",
+        stroke="currentColor", stroke_width="2", stroke_linecap="round",
+        stroke_linejoin="round", aria_hidden="true")
+    rows = [Div(Span(cls="tsw", style=f"background:{bg};box-shadow:inset 0 0 0 2px {ac}"),
+                name, Span("✓", cls="tck"), data_theme_opt=key, cls="topt")
+            for key, (name, bg, ac) in THEMES.items()]
+    return Button(gear, id="settings-btn", type="button", cls="theme-btn",
+                  aria_label="Settings", title="Theme"), \
+           Div(Div("Theme", cls="tpop-h"), *rows, cls="tpop", id="theme-pop")
+
 def layout(f=None):
     if f is None: f = filt()
     sync_selection(f)
@@ -866,8 +960,7 @@ def layout(f=None):
         Div(
             Div(Span("Excel Viewer", cls="stitle"),
                 P(S["sheet"], cls="ssub") if S["sheet"] else Div(),
-                Button("Light", id="theme-toggle", type="button", cls="theme-btn",
-                       aria_label="Switch color theme"),
+                *settings_pop(),
                 cls="pnh"),
             Div(
                 upload(), sheets(), title_pick(), sub_pick(), search_box(),
