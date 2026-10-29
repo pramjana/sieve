@@ -1,6 +1,6 @@
-# Excel Viewer
+# Sieve
 
-A sleek, dark glass-morphism Excel viewer built with **FastHTML + HTMX + pandas**. Upload spreadsheets, filter rows, browse and inspect data in a polished UI.
+A sleek, dark glass-morphism spreadsheet slicer built with **FastHTML + HTMX + pandas**. Upload spreadsheets, slice and dice rows with search and column filters, inspect detail views, save views, and export the filtered result as CSV or Excel.
 
 ---
 

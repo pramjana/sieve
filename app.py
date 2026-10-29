@@ -1,6 +1,6 @@
 """
-Excel Viewer — dark glass-morphism UI, FastHTML + HTMX, pandas.
-Upload → filter → browse → inspect rows.
+Sieve — slice and dice spreadsheets: dark glass-morphism UI, FastHTML + HTMX, pandas.
+Upload → filter → browse → inspect → export.
 """
 
 from pathlib import Path
@@ -1165,7 +1165,7 @@ def layout(f=None):
     return Div(
         # ── Left: Sidebar ─────────────────────────────────────────────
         Div(
-            Div(Span("Excel Viewer", cls="stitle"),
+            Div(Span("Sieve", cls="stitle"),
                 P(S["sheet"], cls="ssub") if S["sheet"] else Div(),
                 *settings_pop(),
                 cls="pnh"),

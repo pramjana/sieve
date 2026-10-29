@@ -8,7 +8,7 @@
 
 ## Current State
 
-This is the default task area for excel-viewer. Tasks that don't belong
+This is the default task area for sieve. Tasks that don't belong
 to a specific domain area are created here.
 
 Taskplane is configured and ready for task execution. Use `/orch all` for
