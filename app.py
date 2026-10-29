@@ -7,12 +7,14 @@ from pathlib import Path
 from io import BytesIO
 
 import json
+import re
 import time
+from urllib.parse import quote
 
 import pandas as pd
 from fasthtml.common import (
     FastHTML, Style, Script, File, StaticFiles, Request,
-    Button, Details, Div, Form, H2, H4, Input,
+    A, Button, Details, Div, Form, H2, H4, Input,
     Label, Option, P, Select, Span, Summary, Svg,
 )
 from pathlib import Path  # used for upload filename suffix only
@@ -606,7 +608,7 @@ rt = app.route
 
 from urllib.parse import urlsplit  # noqa: E402
 from starlette.datastructures import Headers, MutableHeaders  # noqa: E402
-from starlette.responses import Response  # noqa: E402
+from starlette.responses import RedirectResponse, Response  # noqa: E402
 
 # ── Local-tool hardening ──────────────────────────────────────────────────
 # The app has no auth by design (personal tool on 127.0.0.1). These two
@@ -750,6 +752,35 @@ def apply_view(view):
     S["ft"] = {c: str(t) for c, t in (view.get("ft") or {}).items() if c in S["fc"] and t}
     S["search"] = str(view.get("search") or "")
     S["sel"] = None
+
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+def export_cols():
+    """Column order for export: title, sub, then detail columns (deduped)."""
+    out = []
+    for c in (S["tc"], S["sc"], *S["dc"]):
+        if c in S["cols"] and c not in out:
+            out.append(c)
+    return out or S["cols"]
+
+def export_filename(fmt):
+    stem = Path(S["filename"]).stem
+    base = f"{stem}_{S['sheet']}" if S["sheet"] else stem
+    base = re.sub(r"[^\w. -]+", "_", base).strip() or "export"
+    return f"{base}.{fmt}"
+
+def export_response(fmt):
+    """Current view (filtered rows, view columns) as a downloadable CSV/XLSX."""
+    f = filt()[export_cols()]
+    if fmt == "csv":
+        # utf-8-sig BOM so Excel opens UTF-8 CSVs directly.
+        body, media = f.to_csv(index=False).encode("utf-8-sig"), "text/csv"
+    else:
+        buf = BytesIO()
+        f.to_excel(buf, index=False, engine="openpyxl")
+        body, media = buf.getvalue(), _XLSX_MIME
+    cd = f"attachment; filename*=UTF-8''{quote(export_filename(fmt))}"
+    return Response(body, media_type=media, headers={"Content-Disposition": cd})
 
 def sv(v):
     return "" if pd.isna(v) else str(v)
@@ -949,6 +980,18 @@ def saved_view_section():
           f"{' ; sheet: ' + S['sheet'] if S['sheet'] else ''}"),
     ), id="saved-view")
 
+def export_section():
+    """Download the current view (filtered rows, view columns) as CSV/Excel."""
+    if S["df"] is None: return Div(id="export-sec")
+    n = len(filt())
+    return Div(sect("Export",
+        Div(A("CSV", href="/export/csv", cls="btn bxs bp"),
+            A("Excel", href="/export/xlsx", cls="btn bxs bp"),
+            style="display:flex;gap:5px;"),
+        P(f"{n} filtered row{'s' if n != 1 else ''}", id="export-count",
+          style="font-size:10px;color:var(--muted);margin-top:3px;"),
+    ), id="export-sec")
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Filter groups (sidebar)
 # Wide sheets made the sidebar non-responsive: eagerly rendering a group per
@@ -1046,6 +1089,10 @@ def row_refresh(frame=None):
     return (
         row_list(frame),
         Span(f"{len(frame)} of {total} rows", id="row-count", hx_swap_oob="true"),
+        # Keep the sidebar Export section's count in step with the swap.
+        P(f"{len(frame)} filtered row{'s' if len(frame) != 1 else ''}",
+          id="export-count", hx_swap_oob="true",
+          style="font-size:10px;color:var(--muted);margin-top:3px;"),
         # The selected row may have been filtered out (sync_selection cleared
         # it) — reset the detail pane in lockstep so it never shows a row
         # that is no longer in the list.
@@ -1124,7 +1171,7 @@ def layout(f=None):
                 cls="pnh"),
             Div(
                 upload(), sheets(), title_pick(), sub_pick(), search_box(),
-                detail_pick(), filter_pick(), saved_view_section(),
+                detail_pick(), filter_pick(), saved_view_section(), export_section(),
                 Div(
                     Label("Filters", cls="slbl"),
                     Div(col_filters(), id="col-filters", style=FILTERS_STYLE),
@@ -1243,6 +1290,15 @@ def post():
             del views[S["filename"]]
         save_views(views)
     return saved_view_section()
+
+@rt("/export/{fmt}")
+def get(fmt: str):
+    """Download the current view (filtered rows, view columns) as CSV/Excel."""
+    if S["df"] is None:
+        return RedirectResponse("/", status_code=303)
+    if fmt not in ("csv", "xlsx"):
+        return Response("Not found", status_code=404)
+    return export_response(fmt)
 
 @rt("/sheet", methods=["POST"])
 def post(s: str):
