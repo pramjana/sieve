@@ -6,6 +6,9 @@ Upload → filter → browse → inspect rows.
 from pathlib import Path
 from io import BytesIO
 
+import json
+import time
+
 import pandas as pd
 from fasthtml.common import (
     FastHTML, Style, Script, File, StaticFiles, Request,
@@ -689,6 +692,7 @@ S = dict(
     df=None, all_dfs={}, sheets=[], sheet="",
     filename="", cols=[], tc="", sc="",
     dc=[], fc=[], flt={}, ft={}, search="", sel=None, error=None,
+    view_restored=False,
 )
 
 TH = 50  # unique values <= this → multi-select chips
@@ -699,11 +703,53 @@ DC_DEFAULT = 10  # detail columns auto-selected on load; user can add more
 # rebuilt pane loses its flex sizing.
 FILTERS_STYLE = "overflow-y:auto;flex:1;padding-top:6px;"
 FC_DEFAULT = 10  # filterable columns auto-selected on load; user picks via picker
+# Per-file/sheet saved views (explicit Save, auto-restore on upload/sheet).
+# Module constant so tests can redirect it. Structure:
+#   { filename: { sheet: {tc,sc,dc,fc,flt,ft,search,saved_at} } }
+# Filename is only ever a JSON dict key, never a filesystem path.
+VIEWS_FILE = Path(__file__).resolve().parent / "saved_views.json"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════════
+
+def load_views():
+    try:
+        with open(VIEWS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+def save_views(views):  # atomic: tmp + rename
+    tmp = VIEWS_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(views, f, ensure_ascii=False, indent=1)
+    tmp.replace(VIEWS_FILE)
+
+def saved_view_for(fn, sheet):
+    return load_views().get(fn, {}).get(sheet)
+
+def current_view():
+    return {"tc": S["tc"], "sc": S["sc"], "dc": list(S["dc"]), "fc": list(S["fc"]),
+            "flt": {c: sorted(v) for c, v in S["flt"].items()},
+            "ft": dict(S["ft"]), "search": S["search"],
+            "saved_at": time.strftime("%Y-%m-%d %H:%M")}
+
+def apply_view(view):
+    """Restore a saved view into S, validated against the sheet's real
+    columns: stale column names are dropped, bad tc/sc fall back."""
+    cols = S["cols"]
+    S["tc"] = view.get("tc") if view.get("tc") in cols else (cols[0] if cols else "")
+    sc = view.get("sc", "")
+    S["sc"] = sc if (not sc or sc in cols) else ""
+    # "in view" distinguishes an intentionally emptied dc/fc from no key.
+    S["dc"] = [c for c in view.get("dc", cols) if c in cols] if "dc" in view else cols[:DC_DEFAULT]
+    S["fc"] = [c for c in view.get("fc", cols) if c in cols] if "fc" in view else cols[:FC_DEFAULT]
+    S["flt"] = {c: set(map(str, vals)) for c, vals in (view.get("flt") or {}).items() if c in S["fc"]}
+    S["ft"] = {c: str(t) for c, t in (view.get("ft") or {}).items() if c in S["fc"] and t}
+    S["search"] = str(view.get("search") or "")
+    S["sel"] = None
 
 def sv(v):
     return "" if pd.isna(v) else str(v)
@@ -876,6 +922,32 @@ def filter_pick():
             hx_post="/cfg/filter-cols", hx_target="#col-filters", hx_swap="outerHTML",
         ),
     ), id="filter-pick")
+
+def saved_view_section():
+    """Save/Update/Forget the view for the CURRENT file+sheet; the endpoints
+    re-render this section in place (outerHTML swap on #saved-view)."""
+    if S["df"] is None: return Div(id="saved-view")
+    saved = (load_views().get(S["filename"]) or {}).get(S["sheet"])
+    if saved:
+        content = [
+            Span(f"✓ saved {saved.get('saved_at', '')}", cls="dim",
+                 style="font-size:11px;color:var(--dim);"),
+            Button("Update view", hx_post="/view/save", hx_target="#saved-view",
+                   hx_swap="outerHTML", cls="btn bxs bp"),
+            Button("Forget", hx_post="/view/forget", hx_target="#saved-view",
+                   hx_swap="outerHTML", cls="btn bxs bc"),
+        ]
+    else:
+        content = [Button("Save view", hx_post="/view/save", hx_target="#saved-view",
+                          hx_swap="outerHTML", cls="btn bxs bp")]
+    if S.get("view_restored"):
+        content.insert(0, Div("Saved view restored",
+                              style="font-size:11px;color:var(--accent);margin-bottom:3px;"))
+    return Div(sect("Saved View",
+        Div(*content, style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;"),
+        P(S["filename"], style="font-size:10px;color:var(--muted);margin-top:3px;"
+          f"{' ; sheet: ' + S['sheet'] if S['sheet'] else ''}"),
+    ), id="saved-view")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Filter groups (sidebar)
@@ -1052,7 +1124,7 @@ def layout(f=None):
                 cls="pnh"),
             Div(
                 upload(), sheets(), title_pick(), sub_pick(), search_box(),
-                detail_pick(), filter_pick(),
+                detail_pick(), filter_pick(), saved_view_section(),
                 Div(
                     Label("Filters", cls="slbl"),
                     Div(col_filters(), id="col-filters", style=FILTERS_STYLE),
@@ -1131,11 +1203,16 @@ def post(req: Request, file: File):
     S["dc"] = S["cols"][:DC_DEFAULT]
     S["fc"] = S["cols"][:FC_DEFAULT]
     S["flt"] = {}; S["ft"] = {}; S["search"] = ""; S["sel"] = None
+    S["view_restored"] = False
+    v = saved_view_for(S["filename"], S["sheet"])
+    if v:
+        apply_view(v)
+        S["view_restored"] = True
     return layout()
 
 @rt("/close", methods=["POST"])
 def post():
-    for k in ("df","all_dfs","sheets","sheet","filename","cols","tc","sc","dc","fc","flt","ft","search","sel","error"):
+    for k in ("df","all_dfs","sheets","sheet","filename","cols","tc","sc","dc","fc","flt","ft","search","sel","error","view_restored"):
         S[k] = {} if k in ("all_dfs","flt","ft") else [] if k in ("sheets","cols","dc","fc") \
               else "" if k in ("sheet","filename","tc","sc","search","error") else None
     return layout()
@@ -1145,6 +1222,27 @@ def post():
     """Dismiss an upload error while keeping the currently loaded file."""
     S["error"] = None
     return layout()
+
+@rt("/view/save", methods=["POST"])
+def post():
+    """Persist the current view state for this file+sheet as JSON."""
+    if S["df"] is None:
+        return saved_view_section()
+    views = load_views()
+    views.setdefault(S["filename"], {})[S["sheet"]] = current_view()
+    save_views(views)
+    return saved_view_section()
+
+@rt("/view/forget", methods=["POST"])
+def post():
+    """Delete the saved view for this file+sheet."""
+    views = load_views()
+    if S["sheet"] in views.get(S["filename"], {}):
+        del views[S["filename"]][S["sheet"]]
+        if not views[S["filename"]]:
+            del views[S["filename"]]
+        save_views(views)
+    return saved_view_section()
 
 @rt("/sheet", methods=["POST"])
 def post(s: str):
@@ -1157,6 +1255,11 @@ def post(s: str):
     S["dc"] = S["cols"][:DC_DEFAULT]
     S["fc"] = S["cols"][:FC_DEFAULT]
     S["flt"] = {}; S["ft"] = {}; S["search"] = ""; S["sel"] = None
+    S["view_restored"] = False
+    v = saved_view_for(S["filename"], s)
+    if v:
+        apply_view(v)
+        S["view_restored"] = True
     return layout()
 
 @rt("/cfg", methods=["POST"])

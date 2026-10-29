@@ -16,5 +16,6 @@
 
 # Project hygiene
 .sesskey
+saved_views.json
 __pycache__/
 *.pyc
