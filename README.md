@@ -53,7 +53,24 @@ pip install -r requirements.txt
 - 🔍 **Filter** rows with search and column-specific filters
 - 📊 **Browse** paginated, sortable tables
 - 🧠 **Inspect** individual rows with detail views
-- 🌙 **Dark glass-morphism** UI — easy on the eyes
+- 🌗 **"Ink & Paper" themes** — elegant dark and light palettes with a
+  persisted toggle (respects your OS preference on first visit)
+
+[⛔90d9e972-a7a5-4a61-a81a-36107f8b4435]
+## Performance & Limits
+
+- **Single process by design.** All viewer state lives in one module-global
+  dict, so never run `uvicorn --workers > 1` — each worker would hold a
+  different half of the session. Parse/render run on Starlette's threadpool,
+  so the UI stays responsive while a workbook loads.
+- `MAX_FILE_SIZE` = 100 MB (rejected before the body is buffered).
+- `MAX_ROWS` = 500 row cards rendered at once; narrow your search to see more.
+- `DC_DEFAULT` = 10 detail columns auto-selected on load; check more chips if
+  you want them in the detail pane.
+- **Wide sheets** (hundreds of columns) stay snappy: the sidebar renders
+  collapsed filter-group stubs and fetches each group's controls lazily on
+  expand (`GET /filter/{idx}`), instead of shipping thousands of checkboxes
+  in every page swap.
 
 ---
 

@@ -99,6 +99,77 @@ class StateConsistencyTests(unittest.TestCase):
         self.assertIsNone(app.S["sel"])
         self.assertEqual(app.S["dc"], app.S["cols"])
 
+    # ── Lazy sidebar: stubs only, groups fetched on expand ─────────────
+    def test_sidebar_renders_lazy_stubs_only(self):
+        from fasthtml.common import to_xml
+        cf = to_xml(app.col_filters())
+        # cols 0/1 are tc/sc and excluded, so the first stub is index 2
+        self.assertIn('hx-get="/filter/2"', cf)
+        self.assertIn('id="fgb-2"', cf)
+        self.assertIn('hx-trigger="toggle once"', cf)
+        # No eager filter controls — that was the 431-column killer
+        self.assertNotIn('type="checkbox"', cf)
+        self.assertNotIn('name="ft_', cf)
+
+    def test_sidebar_stub_badges_active_filters_without_pandas(self):
+        app.S["flt"] = {"Category": {"fruit", "color"}}
+        from fasthtml.common import to_xml
+        cf = to_xml(app.col_filters())
+        self.assertIn("2 selected", cf)
+
+    def test_filter_endpoint_chip_form_for_low_cardinality(self):
+        response = self.client.get("/filter/2", headers=self.htmx)  # Category
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('name="f_Category"', response.text)
+        self.assertIn('name="f_Category_present"', response.text)
+        self.assertIn('type="checkbox"', response.text)
+
+    def test_filter_endpoint_text_input_for_high_cardinality(self):
+        orig = app.TH
+        app.TH = 0  # force every column into the text-filter branch
+        try:
+            response = self.client.get("/filter/0", headers=self.htmx)
+        finally:
+            app.TH = orig
+        self.assertIn('name="ft_Name"', response.text)
+        self.assertNotIn('type="checkbox"', response.text)
+
+    def test_filter_endpoint_rejects_out_of_range_index(self):
+        response = self.client.get("/filter/999", headers=self.htmx)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('type="checkbox"', response.text)
+
+    # ── Detail-column default cap ───────────────────────────────────────
+    def test_upload_caps_default_detail_columns(self):
+        orig = app.DC_DEFAULT
+        app.DC_DEFAULT = 2
+        try:
+            with open("test.csv", "rb") as f:
+                self.client.post(
+                    "/upload", files={"file": ("test.csv", f, "text/csv")},
+                    headers=self.htmx,
+                )
+        finally:
+            app.DC_DEFAULT = orig
+        self.assertEqual(len(app.S["cols"]), 5)
+        self.assertEqual(app.S["dc"], app.S["cols"][:2])
+
+    def test_oversized_upload_sets_error_and_keeps_loaded_file(self):
+        orig = app.MAX_FILE_SIZE
+        app.MAX_FILE_SIZE = 10  # smaller than test.csv
+        try:
+            with open("test.csv", "rb") as f:
+                response = self.client.post(
+                    "/upload", files={"file": ("test.csv", f, "text/csv")},
+                    headers=self.htmx,
+                )
+        finally:
+            app.MAX_FILE_SIZE = orig
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("File too large", response.text)
+        self.assertIsNotNone(app.S["df"])  # previous file untouched
+        self.assertEqual(app.S["filename"], "demo.csv")
+
     # ── /clear-error keeps a loaded file ───────────────────────────────
     def test_clear_error_keeps_loaded_file(self):
         app.S["error"] = "Unsupported file type. Upload .xlsx, .xls, or .csv."

@@ -9,8 +9,8 @@ from io import BytesIO
 import pandas as pd
 from fasthtml.common import (
     FastHTML, Style, Script, File, htmxsrc, Request,
-    Button, Div, Form, H2, H4, Input,
-    Label, Option, P, Select, Span,
+    Button, Details, Div, Form, H2, H4, Input,
+    Label, Option, P, Select, Span, Summary,
 )
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -19,22 +19,48 @@ from fasthtml.common import (
 
 CSS = r"""
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+/* "Ink & Paper" — two palettes, one design language: flat panels, hairline
+   rules, antique-brass accent, serif headings with mono numerals. Dark "Ink"
+   is the default; [data-theme="light"] swaps to "Paper". Every surface color
+   is a token — a theme is just a var block. */
 :root{
-  --bg:#0b0818;--bg2:#1e1540;--accent:#a855f7;--accent2:#7c3aed;
-  --glow:rgba(168,85,247,.2);--glow2:rgba(168,85,247,.45);
-  --glass:rgba(255,255,255,.04);--glass2:rgba(255,255,255,.07);
-  --border:rgba(255,255,255,.08);--border2:rgba(255,255,255,.16);
-  --txt:#e4daf0;--txt2:#f0e8fa;--dim:#7b6f96;--muted:#5a4f72;
-  --danger:#f43f5e;--success:#34d399;--r:10px;--rs:6px;
+  --bg:#131519;--bg2:#181b21;--bg3:#101217;
+  --panel:#1b1e24;--panel2:#22262e;
+  --accent:#c9a45c;--accent2:#b8934a;--accent-ink:#17191e;
+  --glow:rgba(201,164,92,.14);--glow2:rgba(201,164,92,.35);
+  --border:rgba(233,229,220,.13);--border2:rgba(233,229,220,.26);
+  --hairline:rgba(233,229,220,.06);--hover:rgba(233,229,220,.05);--hover2:rgba(233,229,220,.09);
+  --field:rgba(0,0,0,.25);--cell:rgba(0,0,0,.2);--dz-bg:rgba(0,0,0,.18);
+  --txt:#d8d4ca;--txt2:#f0ece2;--dim:#9a958a;--muted:#6e6a62;
+  --danger:#e05260;--success:#5cb87f;
+  --overlay:rgba(19,21,25,.78);
+  --panel-shadow:0 1px 3px rgba(0,0,0,.35),0 8px 28px rgba(0,0,0,.3);
+  --r:6px;--rs:4px;
+  --font-ui:'Helvetica Neue',Helvetica,'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
+  --font-serif:'Iowan Old Style','Palatino Linotype',Palatino,Georgia,'Times New Roman',serif;
+  --font-mono:'SF Mono','Cascadia Mono',Consolas,'Liberation Mono',Menlo,monospace;
 }
-html,body{height:100%;width:100%;font-family:'Inter','Segoe UI',system-ui,sans-serif;
-  background:linear-gradient(160deg,var(--bg),var(--bg2) 40%,#0f0a24);color:var(--txt);font-size:14px}
+[data-theme="light"]{
+  --bg:#f2efe8;--bg2:#eae6dc;--bg3:#f8f6f1;
+  --panel:#fbfaf6;--panel2:#f1eee5;
+  --accent:#8a6a1f;--accent2:#6f5518;--accent-ink:#fdfcf8;
+  --glow:rgba(138,106,31,.12);--glow2:rgba(138,106,31,.3);
+  --border:rgba(28,30,34,.18);--border2:rgba(28,30,34,.38);
+  --hairline:rgba(28,30,34,.08);--hover:rgba(28,30,34,.045);--hover2:rgba(28,30,34,.07);
+  --field:#ffffff;--cell:#f5f2ea;--dz-bg:#fbfaf6;
+  --txt:#33363c;--txt2:#1c1e22;--dim:#6a6d74;--muted:#8b8e95;
+  --danger:#c02f3e;--success:#1e8a4c;
+  --overlay:rgba(242,239,232,.82);
+  --panel-shadow:0 1px 2px rgba(60,50,30,.08),0 6px 24px rgba(60,50,30,.1);
+}
+html,body{height:100%;width:100%;font-family:var(--font-ui);
+  background:var(--bg);color:var(--txt);font-size:13.5px;line-height:1.5;
+  font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
 
 /* Layout */
 .app{display:flex;height:100vh;padding:0 10px}
-.pnl{display:flex;flex-direction:column;overflow:hidden;background:var(--glass);
-  backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
-  border:1px solid var(--border);border-radius:var(--r);box-shadow:0 4px 24px rgba(0,0,0,.25);
+.pnl{display:flex;flex-direction:column;overflow:hidden;background:var(--panel);
+  border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--panel-shadow);
   min-width:180px}
 .rh{width:6px;flex-shrink:0;cursor:col-resize;display:flex;align-items:center;justify-content:center;
   transition:background .15s}
@@ -48,7 +74,7 @@ html,body{height:100%;width:100%;font-family:'Inter','Segoe UI',system-ui,sans-s
 .rsz:hover,.rsz.on{background:var(--accent)}
 .rsz-i{width:2px;height:32px;border-radius:1px;background:var(--border2);transition:background .15s}
 .rsz:hover .rsz-i,.rsz.on .rsz-i{background:var(--accent);height:48px}
-.pnh{padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0}
+.pnh{padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0;position:relative}
 .pnb{flex:1;overflow-y:auto;padding:12px}
 .pnb::-webkit-scrollbar{width:5px}
 .pnb::-webkit-scrollbar-track{background:0 0}
@@ -56,15 +82,23 @@ html,body{height:100%;width:100%;font-family:'Inter','Segoe UI',system-ui,sans-s
 .pnb::-webkit-scrollbar-thumb:hover{background:var(--border2)}
 
 /* Sidebar */
-.stitle{font-size:15px;font-weight:700;color:var(--accent);letter-spacing:-.3px}
-.ssub{font-size:10px;color:var(--muted);margin-top:2px}
+.stitle{font-family:var(--font-serif);font-size:17px;font-weight:600;
+  color:var(--txt2);letter-spacing:.01em}
+.stitle::after{content:"";display:block;width:26px;height:2px;
+  background:var(--accent);margin-top:5px;border-radius:1px}
+.ssub{font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:4px}
+.theme-btn{position:absolute;top:12px;right:12px;padding:3px 9px;
+  border:1px solid var(--border);border-radius:var(--rs);background:transparent;
+  color:var(--dim);font-family:var(--font-ui);font-size:10px;letter-spacing:.04em;
+  cursor:pointer;transition:all .15s}
+.theme-btn:hover,.theme-btn:focus-visible{border-color:var(--accent);color:var(--txt2)}
 .sect{margin-bottom:14px}
 .slbl{display:block;font-size:10px;font-weight:600;text-transform:uppercase;
-  letter-spacing:1px;color:var(--muted);margin-bottom:5px}
+  letter-spacing:.09em;color:var(--muted);margin-bottom:5px}
 
 /* Upload */
-.dz{border:2px dashed var(--border);border-radius:var(--r);padding:20px 12px;
-  text-align:center;cursor:pointer;transition:all .2s;background:rgba(0,0,0,.15)}
+.dz{border:1px dashed var(--border2);border-radius:var(--r);padding:20px 12px;
+  text-align:center;cursor:pointer;transition:all .2s;background:var(--dz-bg)}
 .dz:hover,.dz.on{border-color:var(--accent);background:var(--glow)}
 .dz-i{font-size:32px;display:block;margin-bottom:4px}
 .dz-t{font-size:12px;color:var(--dim)}
@@ -75,47 +109,49 @@ html,body{height:100%;width:100%;font-family:'Inter','Segoe UI',system-ui,sans-s
   padding:7px 12px;border:1px solid var(--border);border-radius:var(--rs);
   background:var(--glass2);color:var(--txt);font-size:12px;font-weight:500;
   cursor:pointer;transition:all .15s;text-decoration:none;font-family:inherit}
-.btn:hover{background:rgba(255,255,255,.1);border-color:var(--border2)}
-.bp{background:var(--accent);border-color:var(--accent);color:#fff}
-.bp:hover{background:var(--accent2)}
+.btn:hover{background:var(--hover2);border-color:var(--border2)}
+.bp{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.bp:hover{background:var(--accent2);border-color:var(--accent2)}
 .bxs{padding:2px 8px;font-size:10px}
-.bc{border-color:rgba(244,63,94,.3);color:var(--danger)}
-.bc:hover{background:rgba(244,63,94,.12)}
+.bc{border-color:var(--border);color:var(--danger)}
+.bc:hover{background:var(--hover2);border-color:var(--danger)}
 
 /* Inputs */
 input[type="text"],input[type="search"],select{width:100%;padding:7px 10px;
   border:1px solid var(--border);border-radius:var(--rs);
-  background:rgba(0,0,0,.3);color:var(--txt);font-size:12px;
+  background:var(--field);color:var(--txt);font-size:12px;
   font-family:inherit;outline:none;transition:border-color .15s,box-shadow .15s}
 input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
 select{cursor:pointer}
-select option{background:var(--bg2);color:var(--txt)}
+select option{background:var(--panel);color:var(--txt)}
 
 /* Sheet tabs */
 .stabs{display:flex;flex-wrap:wrap;gap:3px}
 .stab{padding:5px 10px;border-radius:var(--rs);border:1px solid var(--border);
   background:0 0;color:var(--dim);font-size:11px;font-family:inherit;cursor:pointer;transition:all .15s}
 .stab:hover{border-color:var(--accent);color:var(--txt)}
-.stab.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.stab.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 
 /* Row cards */
 .rcard{padding:10px 12px;border-radius:var(--rs);border:1px solid transparent;
   cursor:pointer;transition:all .12s;margin-bottom:3px}
-.rcard:hover{background:rgba(255,255,255,.06);border-color:var(--border)}
+.rcard:hover{background:var(--hover);border-color:var(--border)}
 .rcard.sel{background:var(--glow);border-color:var(--accent)}
 .rcard:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-.rtitle{font-size:13px;font-weight:600;color:var(--txt2);white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis}
+.rcard{content-visibility:auto;contain-intrinsic-size:auto 64px}
+.rtitle{font-family:var(--font-serif);font-size:14px;font-weight:600;color:var(--txt2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rsub{font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ridx{font-size:9px;color:var(--muted);margin-top:1px}
+.ridx{font-family:var(--font-mono);font-size:9px;color:var(--muted);margin-top:1px}
 
 /* Detail grid */
 .dgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.dcell{padding:8px 10px;border-radius:var(--rs);background:rgba(0,0,0,.18);
+.dcell{padding:8px 10px;border-radius:var(--rs);background:var(--cell);
   border:1px solid var(--border)}
 .dcell .lbl{font-size:9px;font-weight:600;text-transform:uppercase;
-  letter-spacing:.7px;color:var(--muted);margin-bottom:3px}
-.dcell .val{font-size:12px;word-break:break-word;color:var(--txt2);line-height:1.4}
+  letter-spacing:.09em;color:var(--muted);margin-bottom:3px}
+.dcell .val{font-family:var(--font-mono);font-size:11.5px;word-break:break-word;
+  color:var(--txt2);line-height:1.5}
 .dcell .val:empty::before{content:"\2014";color:var(--muted)}
 .dhead{display:flex;align-items:center;justify-content:space-between;gap:6px}
 .copy-btn{padding:1px 5px;border:1px solid var(--border);border-radius:3px;
@@ -123,27 +159,35 @@ select option{background:var(--bg2);color:var(--txt)}
 .copy-btn:hover,.copy-btn:focus-visible{border-color:var(--accent);color:var(--txt)}
 
 /* Chips */
-.fgrp{margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.03)}
-.fgrp-t{font-size:11px;font-weight:600;color:var(--dim);margin-bottom:4px}
+.fgrp{margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--hairline);
+  content-visibility:auto;contain-intrinsic-size:auto 42px}
+.fgrp summary{list-style:none;cursor:pointer;display:flex;align-items:center;
+  justify-content:space-between;gap:6px}
+.fgrp summary::-webkit-details-marker{display:none}
+.fgrp summary:hover .fgrp-t{color:var(--txt2)}
+.fgrp-on{color:var(--accent);font-size:10px;font-weight:600;white-space:nowrap}
+.fgrp-body{padding-top:6px}
+.fgrp-t{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--dim);margin-bottom:4px}
 .fchips{display:flex;flex-wrap:wrap;gap:3px;max-height:80px;overflow-y:auto}
 .chip{display:inline-flex;align-items:center;gap:2px;padding:2px 7px;
-  border-radius:3px;border:1px solid var(--border);font-size:10px;
+  border-radius:3px;border:1px solid var(--border);font-family:var(--font-mono);font-size:10px;
   cursor:pointer;transition:all .12s;background:0 0;color:var(--dim);user-select:none}
 .chip:hover{border-color:var(--accent);color:var(--txt)}
-.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.chip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .chip input{display:none}
 
 /* Result bar */
 .rbar{display:flex;align-items:center;justify-content:space-between;
-  font-size:10px;color:var(--muted);padding:6px 14px;
-  border-bottom:1px solid var(--border);flex-shrink:0}
+  font-family:var(--font-mono);font-size:10px;color:var(--muted);padding:6px 14px;
+  border-bottom:1px solid var(--hairline);flex-shrink:0}
 .rbar span{display:flex;align-items:center;gap:4px}
 
 /* Welcome/empty */
 .welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;
   height:100%;text-align:center;color:var(--dim)}
-.welcome .ic{font-size:48px;margin-bottom:12px}
-.welcome h2{font-size:17px;color:var(--txt);margin-bottom:6px}
+.welcome .ic{font-size:48px;margin-bottom:12px;opacity:.85}
+.welcome h2{font-family:var(--font-serif);font-size:18px;font-weight:600;color:var(--txt2);margin-bottom:6px}
 .welcome p{font-size:12px;max-width:260px;line-height:1.6}
 .empty{text-align:center;padding:24px;color:var(--muted);font-size:12px}
 
@@ -155,7 +199,7 @@ select option{background:var(--bg2);color:var(--txt)}
 /* Loading indicator */
 .loading-overlay{
   position:fixed;top:0;left:0;right:0;bottom:0;
-  background:rgba(11,8,24,0.7);backdrop-filter:blur(4px);
+  background:var(--overlay);backdrop-filter:blur(4px);
   display:flex;align-items:center;justify-content:center;
   z-index:9999;opacity:0;transition:opacity 0.2s;pointer-events:none;
 }
@@ -249,6 +293,22 @@ document.addEventListener('DOMContentLoaded', () => {
     if (ev.target.matches('#fi') && ev.target.files.length) ev.target.form?.requestSubmit();
   });
 
+  // Theme toggle — state lives on <html> (see HEAD_JS), persisted in
+  // localStorage; delegated so it survives full #app swaps.
+  const syncThemeBtn = () => {
+    const b = document.getElementById('theme-toggle');
+    if (b) b.textContent = document.documentElement.dataset.theme === 'light' ? 'Dark' : 'Light';
+  };
+  document.addEventListener('click', ev => {
+    if (!ev.target.closest('#theme-toggle')) return;
+    const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('xv-theme', next); } catch (_) {}
+    syncThemeBtn();
+  });
+  document.body.addEventListener('htmx:afterSwap', syncThemeBtn);
+  syncThemeBtn();
+
   // Row cards behave like a small keyboard-navigable list.
   document.addEventListener('keydown', ev => {
     const card = ev.target.closest('.rcard');
@@ -299,11 +359,17 @@ document.addEventListener('DOMContentLoaded', () => {
   // overlay; debounced search/filter requests would make it strobe and block
   // typing.
   const isHeavy = elt => !!elt?.closest?.('#upload-form, .stabs, [hx-post="/close"]');
+  // The afterRequest cleanup must hang off the REQUESTING ELEMENT, not body:
+  // these requests outerHTML-swap #app, so by the time htmx fires afterRequest
+  // the element is detached and its event never bubbles to document. A
+  // body-level listener misses it and the click-blocking overlay sticks
+  // forever — the classic "app became non-responsive after upload" freeze.
   document.body.addEventListener('htmx:beforeRequest', ev => {
-    if (isHeavy(ev.detail.elt)) overlay.classList.add('active');
-  });
-  document.body.addEventListener('htmx:afterRequest', ev => {
-    if (isHeavy(ev.detail.elt)) overlay.classList.remove('active');
+    const elt = ev.detail.elt;
+    if (!isHeavy(elt)) return;
+    overlay.classList.add('active');
+    elt.addEventListener('htmx:afterRequest',
+      () => overlay.classList.remove('active'), { once: true });
   });
 
   // ── Panel resize ─────────────────────────────────────────────────────
@@ -361,8 +427,13 @@ document.addEventListener('DOMContentLoaded', () => {
 # App + State
 # ═══════════════════════════════════════════════════════════════════════════
 
+# Runs before first paint so the stored theme never flashes the wrong palette.
+HEAD_JS = ("try{var t=localStorage.getItem('xv-theme');"
+           "if(!t)t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';"
+           "document.documentElement.setAttribute('data-theme',t);}catch(e){}")
+
 app = FastHTML(
-    hdrs=(Style(CSS), htmxsrc, Script(JS)),
+    hdrs=(Script(HEAD_JS), Style(CSS), htmxsrc, Script(JS)),
     default_hdrs=False,
 )
 rt = app.route
@@ -370,12 +441,13 @@ rt = app.route
 S = dict(
     df=None, all_dfs={}, sheets=[], sheet="",
     filename="", cols=[], tc="", sc="",
-    dc=[], flt={}, ft={}, search="", sel=None,
+    dc=[], flt={}, ft={}, search="", sel=None, error=None,
 )
 
 TH = 50  # unique values <= this → multi-select chips
 MAX_ROWS = 500  # cap rows rendered to browser (DOM weight)
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+DC_DEFAULT = 10  # detail columns auto-selected on load; user can add more
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -434,7 +506,7 @@ def upload():
         return sect("File", Div(
             Span("⚠️", cls="dz-i"), P(error, cls="dz-f", style="color:var(--danger);"),
             Div(*buttons, style="display:flex;gap:4px;justify-content:center;"),
-            style="border:1px solid var(--border);border-radius:var(--r);padding:14px;text-align:center;background:rgba(0,0,0,.15);",
+            style="border:1px solid var(--border);border-radius:var(--r);padding:14px;text-align:center;background:var(--dz-bg);",
         ))
     if loaded:
         return sect("File", Div(
@@ -449,7 +521,7 @@ def upload():
                 hx_post="/upload", hx_target="#app", hx_swap="outerHTML", hx_include="#fi",
                 hx_encoding="multipart/form-data", id="upload-form",
             ),
-            style="border:1px solid var(--border);border-radius:var(--r);padding:14px;text-align:center;background:rgba(0,0,0,.15);",
+            style="border:1px solid var(--border);border-radius:var(--r);padding:14px;text-align:center;background:var(--dz-bg);",
         ))
     return sect("File",
         Div(Span("📂", cls="dz-i"), P("Drop an Excel or CSV file or click", cls="dz-t"),
@@ -514,44 +586,62 @@ def detail_pick():
         ),
     ), id="detail-pick")
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Filter groups (sidebar)
+# Wide sheets made the sidebar non-responsive: eagerly rendering a group per
+# column meant 400+ groups and thousands of checkboxes shipped in every #app
+# swap. Sidebar now renders cheap collapsed stubs (no pandas access at all);
+# the real chip/text controls are fetched by GET /filter/{idx} on first
+# expand. Column identity travels as an index into S["cols"], never a raw
+# name in the URL.
+# ═══════════════════════════════════════════════════════════════════════════
+
 def col_filters():
     if S["df"] is None or not S["cols"]: return Div()
     gs = []
-    for col in S["cols"]:
+    for i, col in enumerate(S["cols"]):
         if col == S["tc"] or col == S["sc"]: continue
-        n = int(S["df"][col].dropna().nunique())
-        cv = S["flt"].get(col, set())
-        ct = S["ft"].get(col, "")
-        if n <= TH:
-            vals = sorted(S["df"][col].dropna().unique()[:100], key=lambda x: str(x))
-            chips = [Label(
-                Input(type="checkbox", name=f"f_{col}", value=str(v), checked=(str(v) in cv)),
-                str(v), cls=f"chip{' on' if str(v) in cv else ''}"
-            ) for v in vals]
-            gs.append(Div(
-                Span(f"Filter: {col}", cls="fgrp-t"),
-                Form(
-                    Div(Button("All", cls="btn bxs", data_sel="", type="button"),
-                        Button("Clear", cls="btn bxs", data_clear="", type="button"),
-                        style="display:flex;gap:3px;margin-bottom:3px;"),
-                    Div(*chips, cls="fchips"),
-                    Input(type="hidden", name=f"f_{col}_present", value="1"),
-                    Button("Apply", cls="btn bxs bp wf mt4"),
-                    hx_post="/apply", hx_target="#main-wrap", hx_swap="outerHTML",
-                    hx_include="#filter-form", data_autosubmit="true",
-                ),
-                cls="fgrp",
-            ))
-        else:
-            gs.append(Div(
-                Span(f"Filter: {col}", cls="fgrp-t"),
-                Input(type="text", name=f"ft_{col}", placeholder=f"Filter {col}\u2026",
-                      value=ct, hx_post="/apply", hx_target="#main-wrap",
-                      hx_swap="outerHTML", hx_trigger="input changed delay:250ms",
-                      hx_include="#filter-form", style="margin-top:3px;"),
-                cls="fgrp",
-            ))
+        nsel = len(S["flt"].get(col) or ())
+        badge = Span(f"{nsel} selected", cls="fgrp-on") if nsel else (
+            Span("text filter", cls="fgrp-on") if S["ft"].get(col) else None)
+        summary = Summary(Span(f"Filter: {col}", cls="fgrp-t"),
+                          *( [badge] if badge else [] ))
+        # <summary> stays outside the swap target: swapping the <details>'s
+        # own innerHTML would destroy the disclosure element.
+        gs.append(Details(
+            summary,
+            Div(id=f"fgb-{i}", cls="fgrp-body"),
+            cls="fgrp", hx_get=f"/filter/{i}", hx_trigger="toggle once",
+            hx_target=f"#fgb-{i}", hx_swap="innerHTML",
+        ))
     return Div(*gs)
+
+def filter_group_body(col):
+    """The expandable body of one filter group: chip form (low cardinality)
+    or text input (high cardinality). Loaded lazily into #fgb-{idx}."""
+    n = int(S["df"][col].dropna().nunique())
+    cv = S["flt"].get(col, set())
+    ct = S["ft"].get(col, "")
+    if n <= TH:
+        vals = sorted(S["df"][col].dropna().unique()[:100], key=lambda x: str(x))
+        chips = [Label(
+            Input(type="checkbox", name=f"f_{col}", value=str(v), checked=(str(v) in cv)),
+            str(v), cls=f"chip{' on' if str(v) in cv else ''}"
+        ) for v in vals]
+        return Form(
+            Div(Button("All", cls="btn bxs", data_sel="", type="button"),
+                Button("Clear", cls="btn bxs", data_clear="", type="button"),
+                style="display:flex;gap:3px;margin-bottom:3px;"),
+            Div(*chips, cls="fchips"),
+            Input(type="hidden", name=f"f_{col}_present", value="1"),
+            Button("Apply", cls="btn bxs bp wf mt4"),
+            hx_post="/apply", hx_target="#main-wrap", hx_swap="outerHTML",
+            hx_include="#filter-form", data_autosubmit="true",
+        )
+    return Input(type="text", name=f"ft_{col}", placeholder=f"Filter {col}\u2026",
+                 value=ct, hx_post="/apply", hx_target="#main-wrap",
+                 hx_swap="outerHTML", hx_trigger="input changed delay:250ms",
+                 hx_include="#filter-form", style="margin-top:3px;")
 
 def row_cards(df):
     if S["df"] is None:
@@ -609,7 +699,7 @@ def detail_view(row_i):
     if not cells:
         cells = [P("No detail columns selected.", cls="empty")]
     return Div(
-        H4(f"Row {row_i + 1}", style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--accent)"),
+        H4(f"Row {row_i + 1}", style="font-family:var(--font-serif);font-size:14px;font-weight:600;margin-bottom:10px;color:var(--txt2)"),
         Div(*cells, cls="dgrid"),
     )
 
@@ -627,6 +717,8 @@ def layout(f=None):
         Div(
             Div(Span("Excel Viewer", cls="stitle"),
                 P(S["sheet"], cls="ssub") if S["sheet"] else Div(),
+                Button("Light", id="theme-toggle", type="button", cls="theme-btn",
+                       aria_label="Switch color theme"),
                 cls="pnh"),
             Div(
                 upload(), sheets(), title_pick(), sub_pick(), search_box(),
@@ -666,12 +758,20 @@ def layout(f=None):
 def get():
     return layout()
 
+_MULTIPART_SLACK = 64 * 1024  # framing overhead around the file part
+
 @rt("/upload", methods=["POST"])
-def post(file: File):
-    data = file.file.read()
+def post(req: Request, file: File):
+    # Reject on declared size BEFORE buffering, then cap the read itself —
+    # an oversized body must never land fully in memory.
+    cl = req.headers.get("content-length", "")
+    if cl.isdigit() and int(cl) > MAX_FILE_SIZE + _MULTIPART_SLACK:
+        S["error"] = f"File too large. Max {MAX_FILE_SIZE//(1024*1024)}MB."
+        return layout()
+    data = file.file.read(MAX_FILE_SIZE + 1)
     file.file.close()  # release the spooled temp file promptly
     if len(data) > MAX_FILE_SIZE:
-        S["error"] = f"File too large ({len(data)//(1024*1024)}MB). Max {MAX_FILE_SIZE//(1024*1024)}MB."
+        S["error"] = f"File too large. Max {MAX_FILE_SIZE//(1024*1024)}MB."
         return layout()
     ext = Path(file.filename).suffix.lower()
     if ext not in (".csv", ".xls", ".xlsx"):
@@ -698,7 +798,7 @@ def post(file: File):
     S["cols"] = list(S["df"].columns)
     S["tc"] = S["cols"][0] if S["cols"] else ""
     S["sc"] = S["cols"][1] if len(S["cols"]) > 1 else ""
-    S["dc"] = S["cols"][:]  # Initialize with all columns
+    S["dc"] = S["cols"][:DC_DEFAULT]
     S["flt"] = {}; S["ft"] = {}; S["search"] = ""; S["sel"] = None
     return layout()
 
@@ -723,7 +823,7 @@ def post(s: str):
     S["cols"] = list(S["df"].columns)
     S["tc"] = S["cols"][0] if S["cols"] else ""
     S["sc"] = S["cols"][1] if len(S["cols"]) > 1 else ""
-    S["dc"] = S["cols"][:]  # Initialize with all columns
+    S["dc"] = S["cols"][:DC_DEFAULT]
     S["flt"] = {}; S["ft"] = {}; S["search"] = ""; S["sel"] = None
     return layout()
 
@@ -780,6 +880,13 @@ def get(idx: int):
         return detail_view(None)
     S["sel"] = idx
     return detail_view(idx)
+
+@rt("/filter/{idx}")
+def get(idx: int):
+    """Lazy body of one sidebar filter group (idx into S["cols"])."""
+    if S["df"] is None or idx < 0 or idx >= len(S["cols"]):
+        return Div()
+    return filter_group_body(S["cols"][idx])
 
 
 # ═══════════════════════════════════════════════════════════════════════════
